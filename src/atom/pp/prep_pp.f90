@@ -618,7 +618,7 @@ SUBROUTINE calc_Vpsl_isolated(lg,mg,system,info,pp,fg,vpsl,ppg,property)
   allocate(ppg%zekr_uV(ppg%nps,ppg%nlma,1))
   ppg%zekr_uV(:,:,1) = dcmplx(ppg%uV)
   if(yn_spinorbit == 'y') then
-    allocate(ppg%zekr_uV_so(ppg%nps,ppg%nlma,1,2,1))
+    allocate(ppg%zekr_uV_so(ppg%nps,size(ppg%ia_tbl_so),1,2,1))
     ppg%zekr_uV_so(:,:,1,1:2,1) = dcmplx(ppg%uv_so(:,:,1:2,1))
   end if
 
