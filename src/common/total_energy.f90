@@ -24,7 +24,7 @@ CONTAINS
   SUBROUTINE calc_Total_Energy_isolated(system,info,lg,mg,pp,ppg,fg,poisson,rho,Vh,Vxc,rion_update,energy)
     use structures
     use math_constants,only : pi,zi
-    use salmon_global, only: kion, yn_jm, method_poisson, yn_ffte, natom
+    use salmon_global, only: kion, yn_jm, method_poisson, yn_ffte, natom, yn_fix_func, theory
 #ifdef USE_FFTW
     use salmon_global,only : yn_fftw
 #endif
