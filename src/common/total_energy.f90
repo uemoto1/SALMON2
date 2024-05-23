@@ -276,7 +276,7 @@ CONTAINS
     use structures
     use salmon_math
     use math_constants,only : pi,zi
-    use salmon_global, only: kion,aEwald, cutoff_r, yn_jm
+    use salmon_global, only: kion,aEwald, cutoff_r, yn_jm, yn_fix_func, theory
     use communication, only: comm_summation,comm_is_root
     use timer
     implicit none
@@ -291,13 +291,27 @@ CONTAINS
     logical                 ,intent(in) :: rion_update
     type(s_dft_energy)                  :: energy
     !
-    integer :: ix,iy,iz,iia,ia,ib,zps1,zps2,ipair
+    integer :: ix,iy,iz,iia,ia,ib,zps1,zps2,ipair,ispin,ik,io
     real(8) :: rr,rab(3),r(3),E_tmp,E_tmp_l,g(3),Gd,sysvol,E_wrk(5),E_sum(5)
     real(8) :: E_wrk_local_1,E_wrk_local_2
     real(8) :: etmp
     complex(8) :: rho_e,rho_i
 
     call timer_begin(LOG_TE_PERIODIC_CALC)
+
+    if(yn_fix_func=='y' .and. theory(1:3)/='dft') then
+      E_tmp = 0d0
+      do ispin=1,system%Nspin
+      do ik=1,system%nk
+      do io=1,system%no
+        E_tmp = E_tmp + system%wtk(ik) * system%rocc(io,ik,ispin) * energy%esp(io,ik,ispin)
+      end do
+      end do
+      end do
+      energy%E_tot = E_tmp
+      call timer_end(LOG_TE_PERIODIC_CALC)
+      return
+    end if
 
     sysvol = system%det_a
 
