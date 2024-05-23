@@ -24,7 +24,7 @@ CONTAINS
   SUBROUTINE calc_Total_Energy_isolated(system,info,lg,mg,pp,ppg,fg,poisson,rho,Vh,Vxc,rion_update,energy)
     use structures
     use math_constants,only : pi,zi
-    use salmon_global, only: kion, yn_jm, method_poisson, yn_ffte, natom
+    use salmon_global, only: kion, yn_jm, method_poisson, yn_ffte, natom, yn_fix_func, theory
 #ifdef USE_FFTW
     use salmon_global,only : yn_fftw
 #endif
@@ -257,12 +257,13 @@ CONTAINS
 
     call comm_summation(sum1,sum2,info%icomm_r)
 
-    Etot = Etot + sum2*system%Hvol + energy%E_xc + energy%E_ion_ion
-    select case(method_poisson)
-    case('ft')
-      Etot = Etot + E_sum(1) + E_sum(2) + E_sum(3)
-    end select
-
+    if(yn_fix_func=='n' .or. theory(1:3)=='dft') then
+      Etot = Etot + sum2*system%Hvol + energy%E_xc + energy%E_ion_ion
+      select case(method_poisson)
+      case('ft')
+        Etot = Etot + E_sum(1) + E_sum(2) + E_sum(3)
+      end select
+    end if
     energy%E_tot = Etot
 
     call timer_end(LOG_TE_ISOLATED_COMM_COLL)
@@ -276,7 +277,7 @@ CONTAINS
     use structures
     use salmon_math
     use math_constants,only : pi,zi
-    use salmon_global, only: kion,aEwald, cutoff_r, yn_jm
+    use salmon_global, only: kion,aEwald, cutoff_r, yn_jm, yn_fix_func, theory
     use communication, only: comm_summation,comm_is_root
     use timer
     implicit none
@@ -291,13 +292,27 @@ CONTAINS
     logical                 ,intent(in) :: rion_update
     type(s_dft_energy)                  :: energy
     !
-    integer :: ix,iy,iz,iia,ia,ib,zps1,zps2,ipair
+    integer :: ix,iy,iz,iia,ia,ib,zps1,zps2,ipair,ispin,ik,io
     real(8) :: rr,rab(3),r(3),E_tmp,E_tmp_l,g(3),Gd,sysvol,E_wrk(5),E_sum(5)
     real(8) :: E_wrk_local_1,E_wrk_local_2
     real(8) :: etmp
     complex(8) :: rho_e,rho_i
 
     call timer_begin(LOG_TE_PERIODIC_CALC)
+
+    if(yn_fix_func=='y' .and. theory(1:3)/='dft') then
+      E_tmp = 0d0
+      do ispin=1,system%Nspin
+      do ik=1,system%nk
+      do io=1,system%no
+        E_tmp = E_tmp + system%wtk(ik) * system%rocc(io,ik,ispin) * energy%esp(io,ik,ispin)
+      end do
+      end do
+      end do
+      energy%E_tot = E_tmp
+      call timer_end(LOG_TE_PERIODIC_CALC)
+      return
+    end if
 
     sysvol = system%det_a
 
