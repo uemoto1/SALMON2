@@ -797,7 +797,7 @@ contains
     use structures, only: s_ofile,s_dft_energy,s_md
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root
-    use salmon_global, only: ensemble, thermostat, out_rt_energy_step, yn_periodic, yn_jm
+    use salmon_global, only: ensemble, thermostat, out_rt_energy_step, yn_periodic, yn_jm, yn_fix_func
     use filesystem, only: open_filehandle
     use inputoutput, only: yn_md,t_unit_time,t_unit_energy
     implicit none
@@ -829,7 +829,7 @@ contains
        endif
        endif
 
-       if(yn_periodic=='y' .and. yn_jm=='y') then
+       if( (yn_periodic=='y' .and. yn_jm=='y') .or. yn_fix_func=='y' ) then
          write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
           & 1, "Time", trim(t_unit_time%name), &
           & 2, "Eall-Eall0", trim(t_unit_energy%name)
@@ -856,7 +856,7 @@ contains
        write(uid,*)
        flush(uid)
        
-       if(yn_periodic=='y' .and. yn_jm=='y') then
+       if( (yn_periodic=='y' .and. yn_jm=='y') .or. yn_fix_func=='y' ) then
          write(uid, "(F16.8,99(1X,E23.15E3))",advance='no') &
              & 0d0,        &
              & 0d0
@@ -880,7 +880,7 @@ contains
        if(mod(it,out_rt_energy_step)==0)then
           uid = ofl%fh_rt_energy
    
-          if(yn_periodic=='y' .and. yn_jm=='y') then
+          if( (yn_periodic=='y' .and. yn_jm=='y') .or. yn_fix_func=='y' ) then
             write(uid, "(F16.8,99(1X,E23.15E3))",advance='no') &
                & it * dt * t_unit_time%conv,        &
                & (energy%E_tot-energy%E_tot0) * t_unit_energy%conv
