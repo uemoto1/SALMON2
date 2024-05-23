@@ -257,12 +257,13 @@ CONTAINS
 
     call comm_summation(sum1,sum2,info%icomm_r)
 
-    Etot = Etot + sum2*system%Hvol + energy%E_xc + energy%E_ion_ion
-    select case(method_poisson)
-    case('ft')
-      Etot = Etot + E_sum(1) + E_sum(2) + E_sum(3)
-    end select
-
+    if(yn_fix_func=='n' .or. theory(1:3)=='dft') then
+      Etot = Etot + sum2*system%Hvol + energy%E_xc + energy%E_ion_ion
+      select case(method_poisson)
+      case('ft')
+        Etot = Etot + E_sum(1) + E_sum(2) + E_sum(3)
+      end select
+    end if
     energy%E_tot = Etot
 
     call timer_end(LOG_TE_ISOLATED_COMM_COLL)
