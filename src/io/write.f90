@@ -797,7 +797,8 @@ contains
     use structures, only: s_ofile,s_dft_energy,s_md
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root
-    use salmon_global, only: ensemble, thermostat, out_rt_energy_step, yn_periodic, yn_jm, yn_fix_func
+    use salmon_global, only: ensemble, thermostat, out_rt_energy_step, yn_periodic, yn_jm, yn_fix_func &
+    &   ,yn_out_rt_energy_components
     use filesystem, only: open_filehandle
     use inputoutput, only: yn_md,t_unit_time,t_unit_energy
     implicit none
@@ -805,7 +806,7 @@ contains
     type(s_md) :: md
     type(s_ofile) :: ofl
     integer, intent(in) :: it
-    integer :: uid
+    integer :: uid,icolumn
     real(8) :: dt
 
     if(comm_is_root(nproc_id_global)) then
@@ -817,7 +818,14 @@ contains
 10     format("#",1X,A,":",1X,A)
        write(uid,10) "Real time calculation",""
        write(uid,10) "Eall", "Total energy"
-       write(uid,10) "Eall0", "Initial energy"
+       write(uid,10) "Eall0", "Initial total energy"
+       if(yn_out_rt_energy_components=='y') then
+         write(uid,10) "E_kin", "Kinetic energy"
+         write(uid,10) "E_h", "Hartree energy"
+         write(uid,10) "E_ion", "Electron-ion energy"
+         write(uid,10) "E_xc", "Exchange-correlation energy"
+         write(uid,10) "E_ion_ion", "Ion-ion energy"
+       end if
        if(yn_md=='y') then
        write(uid,10) "Tion", "Kinetic energy of ions"
        write(uid,10) "Temperature_ion", "Temperature of ions"
@@ -833,23 +841,35 @@ contains
          write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
           & 1, "Time", trim(t_unit_time%name), &
           & 2, "Eall-Eall0", trim(t_unit_energy%name)
+         icolumn=2
        else
          write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
           & 1, "Time", trim(t_unit_time%name), &
           & 2, "Eall", trim(t_unit_energy%name), &
           & 3, "Eall-Eall0", trim(t_unit_energy%name)
+         icolumn=3
+       end if
+
+       if(yn_out_rt_energy_components=='y') then
+         write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
+         & icolumn+1, "E_kin", trim(t_unit_energy%name), &
+         & icolumn+2, "E_h", trim(t_unit_energy%name), &
+         & icolumn+3, "E_ion", trim(t_unit_energy%name), &
+         & icolumn+4, "E_xc", trim(t_unit_energy%name), &
+         & icolumn+5, "E_ion_ion", trim(t_unit_energy%name)
+         icolumn = icolumn + 5
        end if
 
        if(yn_md=='y') then
        write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
-        & 4, "Tion", trim(t_unit_energy%name), &
-        & 5, "Temperature_ion", "K", &
-        & 6, "E_work", trim(t_unit_energy%name)
+        & icolumn+1, "Tion", trim(t_unit_energy%name), &
+        & icolumn+2, "Temperature_ion", "K", &
+        & icolumn+3, "E_work", trim(t_unit_energy%name)
        if(ensemble=="NVT".and.thermostat=="nose-hoover")then
        write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
-        & 7, "Enh",  trim(t_unit_energy%name), &
-        & 8, "Hnvt", trim(t_unit_energy%name), &
-        & 9, "Hnvt'",trim(t_unit_energy%name)
+        & icolumn+4, "Enh",  trim(t_unit_energy%name), &
+        & icolumn+5, "Hnvt", trim(t_unit_energy%name), &
+        & icolumn+6, "Hnvt'",trim(t_unit_energy%name)
        endif
        endif
 
@@ -865,6 +885,14 @@ contains
              & 0d0,        &
              & energy%E_tot0 * t_unit_energy%conv, &
              & 0d0
+       end if
+       if(yn_out_rt_energy_components=='y') then
+         write(uid, "(99(1X,E23.15E3))",advance='no') &
+         & energy%E_kin * t_unit_energy%conv, &
+         & energy%E_h * t_unit_energy%conv, &
+         & (energy%E_ion_loc+energy%E_ion_nloc) * t_unit_energy%conv, &
+         & energy%E_xc * t_unit_energy%conv, &
+         & energy%E_ion_ion * t_unit_energy%conv
        end if
        if(yn_md=='y') then
          write(uid, "(99(1X,E23.15E3))",advance='no') &
@@ -889,6 +917,14 @@ contains
                & it * dt * t_unit_time%conv,        &
                & energy%E_tot * t_unit_energy%conv, &
                & (energy%E_tot-energy%E_tot0) * t_unit_energy%conv
+          end if
+          if(yn_out_rt_energy_components=='y') then
+            write(uid, "(99(1X,E23.15E3))",advance='no') &
+            & energy%E_kin * t_unit_energy%conv, &
+            & energy%E_h * t_unit_energy%conv, &
+            & (energy%E_ion_loc+energy%E_ion_nloc) * t_unit_energy%conv, &
+            & energy%E_xc * t_unit_energy%conv, &
+            & energy%E_ion_ion * t_unit_energy%conv
           end if
           if(yn_md=='y') then
           write(uid, "(99(1X,E23.15E3))",advance='no') &
