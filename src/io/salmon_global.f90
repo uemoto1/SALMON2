@@ -350,6 +350,7 @@ module salmon_global
   character(1)   :: yn_out_mag_micro_rt
   character(1)   :: yn_out_spin_current_decomposed
   character(1)   :: yn_out_spin_current_micro
+  character(1)   :: yn_out_rt_energy_components
   character(1)   :: yn_out_perflog
   character(6)   :: format_perflog ! 'stdout','text','csv'
   
