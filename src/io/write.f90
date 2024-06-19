@@ -798,7 +798,7 @@ contains
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root
     use salmon_global, only: ensemble, thermostat, out_rt_energy_step, yn_periodic, yn_jm, yn_fix_func &
-    &   ,yn_out_energy_components
+    &   ,yn_out_rt_energy_components
     use filesystem, only: open_filehandle
     use inputoutput, only: yn_md,t_unit_time,t_unit_energy
     implicit none
@@ -819,7 +819,7 @@ contains
        write(uid,10) "Real time calculation",""
        write(uid,10) "Eall", "Total energy"
        write(uid,10) "Eall0", "Initial total energy"
-       if(yn_out_energy_components=='y') then
+       if(yn_out_rt_energy_components=='y') then
          write(uid,10) "E_kin", "Kinetic energy"
          write(uid,10) "E_h", "Hartree energy"
          write(uid,10) "E_ion", "Electron-ion energy"
@@ -850,7 +850,7 @@ contains
          icolumn=3
        end if
 
-       if(yn_out_energy_components=='y') then
+       if(yn_out_rt_energy_components=='y') then
          write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
          & icolumn+1, "E_kin", trim(t_unit_energy%name), &
          & icolumn+2, "E_h", trim(t_unit_energy%name), &
@@ -886,7 +886,7 @@ contains
              & energy%E_tot0 * t_unit_energy%conv, &
              & 0d0
        end if
-       if(yn_out_energy_components=='y') then
+       if(yn_out_rt_energy_components=='y') then
          write(uid, "(99(1X,E23.15E3))",advance='no') &
          & energy%E_kin * t_unit_energy%conv, &
          & energy%E_h * t_unit_energy%conv, &
@@ -918,7 +918,7 @@ contains
                & energy%E_tot * t_unit_energy%conv, &
                & (energy%E_tot-energy%E_tot0) * t_unit_energy%conv
           end if
-          if(yn_out_energy_components=='y') then
+          if(yn_out_rt_energy_components=='y') then
             write(uid, "(99(1X,E23.15E3))",advance='no') &
             & energy%E_kin * t_unit_energy%conv, &
             & energy%E_h * t_unit_energy%conv, &
