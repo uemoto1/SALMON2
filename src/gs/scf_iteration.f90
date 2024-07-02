@@ -113,6 +113,8 @@ subroutine scf_iteration_step(lg,mg,system,info,stencil, &
       call wrapper_broyden(info%icomm_r,mg,system,rho_s,iter,mixing)
     case ('pulay')
       call pulay(mg,info,system,rho_s,iter,mixing)
+    case ('simple_potential')
+      ! Nothing is done here since Hartree and XC potentials are mixed instead of density
     case default
       stop 'Invalid method_mixing. Specify any one of "simple" or "broyden" or "pulay" for method_mixing.'
     end select
@@ -133,6 +135,10 @@ subroutine scf_iteration_step(lg,mg,system,info,stencil, &
     call exchange_correlation(system,xc_func,mg,srg_scalar,srg,rho_s,ppn,info,spsi,stencil,Vxc,energy%E_xc)
     call timer_end(LOG_CALC_EXC_COR)
 
+
+    if(method_mixing=='simple_potential')then
+      call simple_mixing_potential(mg,system,1.d0-mixing%mixrate,mixing%mixrate,Vh,Vxc,mixing)
+    end if
   end if
 
 end subroutine scf_iteration_step
