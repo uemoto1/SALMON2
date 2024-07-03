@@ -116,6 +116,9 @@ subroutine simple_mixing_potential(mg,system,c1,c2,Vh,Vxc,mixing)
       Vxc(1)%f(ix,iy,iz)= &
           c1*mixing%Vxc_in(mixing%num_rho_stock,1)%f(ix,iy,iz) &
          +c2*mixing%Vxc_out(mixing%num_rho_stock,1)%f(ix,iy,iz)
+
+      mixing%Vxc_in(mixing%num_rho_stock,1)%f(ix,iy,iz)=Vh%f(ix,iy,iz)
+      mixing%Vxc_in(mixing%num_rho_stock,1)%f(ix,iy,iz)=Vxc(1)%f(ix,iy,iz)
     end do
     end do
     end do
@@ -145,6 +148,10 @@ subroutine simple_mixing_potential(mg,system,c1,c2,Vh,Vxc,mixing)
       Vxc(2)%f(ix,iy,iz)= &
           c1*mixing%Vxc_in(mixing%num_rho_stock,2)%f(ix,iy,iz) &
          +c2*mixing%Vxc_out(mixing%num_rho_stock,2)%f(ix,iy,iz)
+
+      mixing%Vxc_in(mixing%num_rho_stock,1)%f(ix,iy,iz)=Vh%f(ix,iy,iz)
+      mixing%Vxc_in(mixing%num_rho_stock,1)%f(ix,iy,iz)=Vxc(1)%f(ix,iy,iz)
+      mixing%Vxc_in(mixing%num_rho_stock,2)%f(ix,iy,iz)=Vxc(2)%f(ix,iy,iz)
     end do
     end do
     end do
