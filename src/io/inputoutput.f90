@@ -60,6 +60,7 @@ module inputoutput
   integer :: inml_code
   integer :: inml_band
   integer :: inml_sbe
+  integer :: inml_dc
 
 !Input/Output units
   integer :: iflag_unit_time
@@ -585,6 +586,9 @@ contains
       & nelec_sbe, &
       & al_sbe, &
       & al_vec1_sbe,al_vec2_sbe,al_vec3_sbe
+      
+    namelist/dc/ &
+      & num_fragment
 
 !! == default for &unit ==
     unit_system='au'
@@ -993,6 +997,8 @@ contains
     al_vec1_sbe(:,:) = 0.d0
     al_vec2_sbe(:,:) = 0.d0
     al_vec3_sbe(:,:) = 0.d0
+!! == default for &dc
+    num_fragment = 0
 
     if (comm_is_root(nproc_id_global)) then
       fh_namelist = get_filehandle()
@@ -1068,6 +1074,9 @@ contains
       rewind(fh_namelist)
 
       read(fh_namelist, nml=sbe, iostat=inml_sbe)
+      rewind(fh_namelist)
+      
+      read(fh_namelist, nml=dc, iostat=inml_dc)
       rewind(fh_namelist)
 
       close(fh_namelist)
@@ -1601,6 +1610,8 @@ contains
     al_vec1_sbe = al_vec1_sbe * ulength_to_au
     al_vec2_sbe = al_vec2_sbe * ulength_to_au
     al_vec3_sbe = al_vec3_sbe * ulength_to_au
+!! == bcast for dc
+    call comm_bcast(num_fragment ,nproc_group_global)
   end subroutine read_input_common
 
   subroutine read_atomic_coordinates
@@ -2545,6 +2556,13 @@ contains
         write(fh_variables_log, '("#",4X,A,I3,A,"=",3ES12.5)') 'al_vec2_sbe(1:3',i,')', al_vec2_sbe(1:3,i)
         write(fh_variables_log, '("#",4X,A,I3,A,"=",3ES12.5)') 'al_vec3_sbe(1:3',i,')', al_vec3_sbe(1:3,i)
       end do
+      
+      if(inml_dc >0)ierr_nml = ierr_nml +1
+      write(fh_variables_log, '("#namelist: ",A,", status=",I3)') 'dc', inml_dc
+      write(fh_variables_log, '("#",4X,A,"=",I4)') 'num_fragment(1)',num_fragment(1)
+      write(fh_variables_log, '("#",4X,A,"=",I4)') 'num_fragment(2)',num_fragment(2)
+      write(fh_variables_log, '("#",4X,A,"=",I4)') 'num_fragment(3)',num_fragment(3)
+      
       close(fh_variables_log)
     end if
 

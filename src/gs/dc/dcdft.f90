@@ -20,6 +20,7 @@ contains
 
   subroutine init_dcdft(dc)
     use structures
+    use salmon_global, only: num_fragment
     use parallelization
     use mpi ! --> wrapper
     implicit none
@@ -29,12 +30,11 @@ contains
     integer :: comm_F,nproc_F,myrank_F
     integer :: npg,i,j,k,m,ierr
     
-!!!!!!!!! test
-    dc%n_frag = 4
-    
     dc%icomm_tot = nproc_group_global
     myrank = nproc_id_global
     nproc = nproc_size_global
+    
+    dc%n_frag = num_fragment(1)*num_fragment(2)*num_fragment(3)
     
     ! set dc%i_frag
     npg = nproc / dc%n_frag
