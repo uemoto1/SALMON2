@@ -465,6 +465,24 @@ module structures
      real(8) :: al(3)
      integer,allocatable :: myrank(:), iaddress(:,:), iaddress_new(:,:)
   end type s_k_expand
+  
+! Divide-and-Conquer method
+  type s_dcdft
+  ! total system
+    integer :: icomm_tot    ! MPI communicator
+    real(8) :: elec_num_tot ! total electron number
+    real(8) :: mu_tot       ! chemical potential of the total system
+    type(s_dft_system) :: system_tot
+    type(s_rgrid) :: lg_tot
+    type(s_scalar),allocatable :: rho_tot_s(:),vloc_tot(:) ! density and local KS potential for the total system
+  ! fragment (subsystem)
+    integer :: i_frag       ! fragment index
+    integer :: ixyz_frag(3) ! index of the real-space coordinate for the fragment origin
+    integer :: num_kos_frag ! (# of k-points) x (# of orbitals) x (# of spin states) for the fragment
+    real(8),allocatable :: esp_frag(:) ! (1:num_kos_frag), eigenenergies of the fragment
+    real(8),allocatable :: rne_frag(:) ! (1:num_kos_frag), \int_{domain} d^3r | \psi(r) |^2
+  ! summation
+  end type s_dcdft
 
 ! +----------------------------------+
 ! | for TDDFT real-time calculations |
