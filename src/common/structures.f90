@@ -468,6 +468,8 @@ module structures
   
 ! Divide-and-Conquer method
   type s_dcdft
+  ! summation
+    integer :: n_frag ! # of fragments (subsystems)
   ! total system
     integer :: icomm_tot    ! MPI communicator
     real(8) :: elec_num_tot ! total electron number
@@ -481,7 +483,6 @@ module structures
     integer :: num_kos_frag ! (# of k-points) x (# of orbitals) x (# of spin states) for the fragment
     real(8),allocatable :: esp_frag(:) ! (1:num_kos_frag), eigenenergies of the fragment
     real(8),allocatable :: rne_frag(:) ! (1:num_kos_frag), \int_{domain} d^3r | \psi(r) |^2
-  ! summation
   end type s_dcdft
 
 ! +----------------------------------+

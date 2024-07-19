@@ -209,7 +209,8 @@ contains
     namelist/calculation/ &
       & theory, &
       & yn_md,  &
-      & yn_opt
+      & yn_opt, &
+      & yn_dc
 
     namelist/control/ &
       & sysname, &
@@ -624,6 +625,7 @@ contains
     theory              = 'tddft'
     yn_md               = 'n'
     yn_opt              = 'n'
+    yn_dc               = 'n'
 !! == default for &control
     sysname               = 'default'
     base_directory        = './'
@@ -1117,6 +1119,7 @@ contains
     call comm_bcast(theory             ,nproc_group_global)
     call comm_bcast(yn_md              ,nproc_group_global)
     call comm_bcast(yn_opt             ,nproc_group_global)
+    call comm_bcast(yn_dc              ,nproc_group_global)
 
 !! == bcast for &control
     call comm_bcast(sysname         ,nproc_group_global)
@@ -1983,6 +1986,7 @@ contains
       write(fh_variables_log, '("#",4X,A,"=",A)') 'theory', theory
       write(fh_variables_log, '("#",4X,A,"=",A)') 'yn_md', yn_md
       write(fh_variables_log, '("#",4X,A,"=",A)') 'yn_opt', yn_opt
+      write(fh_variables_log, '("#",4X,A,"=",A)') 'yn_dc', yn_dc
 
       if(inml_control >0)ierr_nml = ierr_nml +1
       write(fh_variables_log, '("#namelist: ",A,", status=",I3)') 'control', inml_control
@@ -2573,6 +2577,7 @@ contains
     ! to correct 'Y' and 'N' to be 'y' and 'n', also error check too
     call yn_argument_check(yn_md)
     call yn_argument_check(yn_opt)
+    call yn_argument_check(yn_dc)
     call yn_argument_check(yn_restart)
     call yn_argument_check(yn_self_checkpoint)
     call yn_argument_check(yn_reset_step_restart)

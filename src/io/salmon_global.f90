@@ -47,6 +47,7 @@ module salmon_global
   character(32)  :: theory
   character(1)   :: yn_md
   character(1)   :: yn_opt
+  character(1)   :: yn_dc
 !! &control
   character(256) :: sysname
   character(256) :: base_directory

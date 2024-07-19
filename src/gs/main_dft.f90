@@ -46,6 +46,7 @@ use band_dft_sub
 use init_gs, only: init_wf
 use initialization_dft
 use jellium, only: check_condition_jm
+use dcdft
 implicit none
 integer :: ix,iy,iz
 integer :: Miter,iatom,jj,nspin
@@ -74,14 +75,23 @@ type(s_mixing) :: mixing
 type(s_ofile)  :: ofl
 type(s_band_dft) ::band
 type(s_opt) :: opt
+type(s_dcdft) :: dc
 
 logical :: rion_update
 logical :: flag_opt_conv
 integer :: Miopt, iopt,nopt_max,i
 integer :: iter_band_kpt, iter_band_kpt_end, iter_band_kpt_stride
 logical :: is_checkpoint_iter, is_shutdown_time
+integer :: ilevel_print
 
 if(theory=='dft_band'.and.iperiodic/=3) return
+
+if(yn_dc=='y') then
+  call init_dcdft(dc)
+  ilevel_print = 2
+else
+  ilevel_print = 3
+end if
 
 !check condition for using jellium model
 if(yn_jm=='y') call check_condition_jm
@@ -90,6 +100,7 @@ call init_xc(xc_func, spin, cval, xcname=xc, xname=xname, cname=cname)
 
 call timer_begin(LOG_TOTAL)
 call timer_begin(LOG_INIT_GS)
+
 
 ! please move folloings into initialization_dft
 call init_dft(nproc_group_global,info,lg,mg,system,stencil,fg,poisson,srg,srg_scalar,ofl)
@@ -195,7 +206,7 @@ call scf_iteration_dft( Miter,rion_update,sum1,  &
                         V_local,Vh,Vxc,Vpsl,xc_func,  &
                         pp,ppg,ppn,  &
                         rho_old,Vlocal_old,  &
-                        band, 3)
+                        band, ilevel_print)
 
 
 if(theory=='dft_band')then
@@ -311,6 +322,11 @@ call fipp_stop ! performance profiling
 
 !------------ Writing part -----------
 call timer_begin(LOG_WRITE_GS_RESULTS)
+
+
+!!!!!!!!! test
+write(*,*) "dc test 2:",energy%E_tot,dc%i_frag !!!!!!!!!
+
 
 ! write GS: basic data
 call write_band_information(system,energy)
