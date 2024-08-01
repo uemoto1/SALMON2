@@ -435,5 +435,6 @@ character(256),allocatable :: atom_name(:)
   
   !! &dc
   integer        :: num_fragment(3)
+  real(8)        :: length_buffer
 
 end module salmon_global

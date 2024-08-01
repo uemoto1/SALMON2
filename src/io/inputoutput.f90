@@ -588,7 +588,8 @@ contains
       & al_vec1_sbe,al_vec2_sbe,al_vec3_sbe
       
     namelist/dc/ &
-      & num_fragment
+      & num_fragment, &
+      & length_buffer
 
 !! == default for &unit ==
     unit_system='au'
@@ -999,6 +1000,7 @@ contains
     al_vec3_sbe(:,:) = 0.d0
 !! == default for &dc
     num_fragment = 0
+    length_buffer = 0d0
 
     if (comm_is_root(nproc_id_global)) then
       fh_namelist = get_filehandle()
@@ -1612,6 +1614,8 @@ contains
     al_vec3_sbe = al_vec3_sbe * ulength_to_au
 !! == bcast for dc
     call comm_bcast(num_fragment ,nproc_group_global)
+    call comm_bcast(length_buffer, nproc_group_global)
+    length_buffer = length_buffer * ulength_to_au
   end subroutine read_input_common
 
   subroutine read_atomic_coordinates
@@ -2562,6 +2566,7 @@ contains
       write(fh_variables_log, '("#",4X,A,"=",I4)') 'num_fragment(1)',num_fragment(1)
       write(fh_variables_log, '("#",4X,A,"=",I4)') 'num_fragment(2)',num_fragment(2)
       write(fh_variables_log, '("#",4X,A,"=",I4)') 'num_fragment(3)',num_fragment(3)
+      write(fh_variables_log, '("#",4X,A,"=",ES12.5)') "length_buffer", length_buffer
       
       close(fh_variables_log)
     end if
@@ -2856,6 +2861,14 @@ contains
 
     if(yn_out_rt_energy_components=='y' .and. yn_periodic=='n') then
       stop "yn_out_rt_energy_components=y is supported for periodic systems only"
+    end if
+    
+    if(yn_dc=='y') then
+      if(theory/='dft') stop "DC method (yn_dc=y): theory=dft must be specified."
+      if(iflag_atom_coor/=ntype_atom_coor_cartesian) stop "DC method (yn_dc=y): use cartesian coordinate"
+      if(temperature < 0d0) stop "DC method (yn_dc=y): temperature must be specified."
+      if(num_fragment(1)*num_fragment(2)*num_fragment(3) == 0) &
+      & stop "DC method (yn_dc=y): num_fragment must be specified."
     end if
 
 #ifdef USE_FFTW
