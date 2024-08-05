@@ -337,9 +337,12 @@ subroutine write_bin(odir,lg,mg,system,info,spsi,iter,mixing,Vh_stock1,Vh_stock2
   character(100) :: dir_file_out
   logical :: iself
 
+  write(1000+nproc_id_global,*) "entrance write_bin"; flush(1000+nproc_id_global)!uemoto
   flag_GS = (theory=='dft'.or.theory=='dft_md'.or.calc_mode=='GS')
+  write(1000+nproc_id_global,*) "flag_GS", flag_GS; flush(1000+nproc_id_global)!uemoto
   flag_RT = (theory=='tddft_response'.or.theory=='tddft_pulse'.or.calc_mode=='RT')
 
+  write(1000+nproc_id_global,*) "if is_self_checkpoint", is_self_checkpoint; flush(1000+nproc_id_global)!uemoto
   if (present(is_self_checkpoint)) then
     iself = is_self_checkpoint
   else
@@ -349,8 +352,10 @@ subroutine write_bin(odir,lg,mg,system,info,spsi,iter,mixing,Vh_stock1,Vh_stock2
   iu1_w = 97
 
   !information
+  write(1000+nproc_id_global,*) "begin information", is_self_checkpoint; flush(1000+nproc_id_global)!uemoto
   if(comm_is_root(nproc_id_global))then
     dir_file_out = trim(odir)//"info.bin"
+    write(1000+nproc_id_global,*) "dir_file_out", trim(dir_file_out); flush(1000+nproc_id_global)!uemoto
     open(iu1_w,file=dir_file_out,form='unformatted')
 
     write(iu1_w) system%nk
@@ -362,9 +367,11 @@ subroutine write_bin(odir,lg,mg,system,info,spsi,iter,mixing,Vh_stock1,Vh_stock2
     write(iu1_w) system%if_real_orbital
 
     close(iu1_w)
+    write(1000+nproc_id_global,*) "close"; flush(1000+nproc_id_global)!uemoto
   end if
 
   !occupation
+  write(1000+nproc_id_global,*) "begin occupation"; flush(1000+nproc_id_global)!uemoto
   if(comm_is_root(nproc_id_global))then
     dir_file_out = trim(odir)//"occupation.bin"
     open(iu1_w,file=dir_file_out,form='unformatted')
@@ -373,18 +380,22 @@ subroutine write_bin(odir,lg,mg,system,info,spsi,iter,mixing,Vh_stock1,Vh_stock2
   end if
 
   !wave fucntion
+  write(1000+nproc_id_global,*) "begin wave fucntion"; flush(1000+nproc_id_global)!uemoto
   if( flag_GS .and. &
       (write_gs_restart_data=='rho_inout'.or.write_gs_restart_data=='rho'))then
      ! this case => do not write wavefunction
   else
+    write(1000+nproc_id_global,*) "call write_wavefunction"; flush(1000+nproc_id_global)!uemoto
      call write_wavefunction(odir,lg,mg,system,info,spsi,iself)
   endif
 
   !rho_inout
+  write(1000+nproc_id_global,*) "if rho_inout"; flush(1000+nproc_id_global)!uemoto
   if( flag_GS.and. &
      (write_gs_restart_data=='rho'.or.write_gs_restart_data=='wfn'))then
      ! this case => do not write rho_inout
   else
+    write(1000+nproc_id_global,*) "call wave write_rho_inout"; flush(1000+nproc_id_global)!uemoto
      if (present(mixing)) then
         call write_rho_inout(odir,lg,mg,system,info,mixing,iself)
      end if
