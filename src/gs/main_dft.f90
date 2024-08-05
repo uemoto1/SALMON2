@@ -375,6 +375,7 @@ if(yn_self_checkpoint=='y') then
    write(1000+nproc_id_global,*) "comm_sync_all"; flush(1000+nproc_id_global)!uemoto
    call comm_sync_all
 endif
+write(1000+nproc_id_global,*) "checkpointing complete"; flush(1000+nproc_id_global)!uemoto
 if(comm_is_root(nproc_id_global)) write(*,'(a)')"  writing completed."
 call timer_end(LOG_WRITE_GS_DATA)
 
