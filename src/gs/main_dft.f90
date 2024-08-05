@@ -313,13 +313,18 @@ call fipp_stop ! performance profiling
 call timer_begin(LOG_WRITE_GS_RESULTS)
 
 ! write GS: basic data
+write(1000+nproc_id_global,*) "call write_band_information"; flush(1000+nproc_id_global)!uemoto
 call write_band_information(system,energy)
+write(1000+nproc_id_global,*) "call write_eigen"; flush(1000+nproc_id_global)!uemoto
 call write_eigen(ofl,system,energy)
+write(1000+nproc_id_global,*) "call write_info_data"; flush(1000+nproc_id_global)!uemoto
 call write_info_data(Miter,system,energy,pp)
+write(1000+nproc_id_global,*) "call write_k_data"; flush(1000+nproc_id_global)!uemoto
 call write_k_data(system,stencil)
 if(yn_spinorbit=='y') call write_mag_decomposed_gs(system,mg,info,spsi)
 
 ! write GS: analysis option
+write(1000+nproc_id_global,*) "if ... call write_psi"; flush(1000+nproc_id_global)!uemoto
 if(yn_out_psi =='y') call write_psi(lg,mg,system,info,spsi)
 if(yn_out_dns =='y') call write_dns(lg,mg,system,info,rho_s)
 if(yn_out_dos =='y') call write_dos(system,energy)
@@ -330,12 +335,16 @@ call timer_end(LOG_WRITE_GS_RESULTS)
 
 ! write GS: binary data for restart
 call timer_begin(LOG_WRITE_GS_DATA)
+write(1000+nproc_id_global,*) "if ... write_gs_restart_data"; flush(1000+nproc_id_global)!uemoto
 if(write_gs_restart_data=="no") then
    if(comm_is_root(nproc_id_global)) &
       write(*,'(a)')"  no restart data writing."
 else if(write_gs_restart_data.ne."checkpoint_only") then
+   write(1000+nproc_id_global,*) "if ... write_gs_restart_data 2"; flush(1000+nproc_id_global)!uemoto
    if(comm_is_root(nproc_id_global)) write(*,'(a)')"  writing restart data..."
+   write(1000+nproc_id_global,*) "call checkpoint_gs"; flush(1000+nproc_id_global)!uemoto
    call checkpoint_gs(lg,mg,system,info,spsi,Miter,mixing,ofl%dir_out_restart)
+   write(1000+nproc_id_global,*) "comm_sync_all"; flush(1000+nproc_id_global)!uemoto
    call comm_sync_all
    if(yn_opt=='y') then
       if(.not.flag_opt_conv) then
@@ -352,10 +361,13 @@ else
        endif
    endif
 endif
+write(1000+nproc_id_global,*) "if yn_self_checkpoint"; flush(1000+nproc_id_global)!uemoto
 if(yn_self_checkpoint=='y') then
    if(comm_is_root(nproc_id_global)) &
    write(*,'(a)')"  writing restart data in checkpoint format ..."
+   write(1000+nproc_id_global,*) "call checkpoint_gs"; flush(1000+nproc_id_global)!uemoto
    call checkpoint_gs(lg,mg,system,info,spsi,Miter,mixing)
+   write(1000+nproc_id_global,*) "comm_sync_all"; flush(1000+nproc_id_global)!uemoto
    call comm_sync_all
 endif
 if(comm_is_root(nproc_id_global)) write(*,'(a)')"  writing completed."

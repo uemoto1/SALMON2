@@ -102,23 +102,32 @@ subroutine checkpoint_gs(lg,mg,system,info,spsi,iter,mixing,odir)
   character(256) :: gdir,wdir
   logical :: iself
 
+  write(1000+nproc_id_global,*) "entrance checkpoint_gs"; flush(1000+nproc_id_global)!uemoto
+
   if (present(odir)) then
     ! save wavefunction
+    write(1000+nproc_id_global,*) "call generate_restart_directory_name"; flush(1000+nproc_id_global)!uemoto
     call generate_restart_directory_name(odir,gdir,wdir)
     iself = .false.
   else
+    write(1000+nproc_id_global,*) "call generate_checkpoint_directory_name"; flush(1000+nproc_id_global)!uemoto
     call generate_checkpoint_directory_name('gs',iter,gdir,wdir)
+    write(1000+nproc_id_global,*) "call atomic_create_directory"; flush(1000+nproc_id_global)!uemoto
     call atomic_create_directory(gdir,nproc_group_global,nproc_id_global)
     iself = (yn_self_checkpoint == 'y')
   end if
 
   if (iself) then
+    write(1000+nproc_id_global,*) "call create_directory"; flush(1000+nproc_id_global)!uemoto
     call create_directory(wdir)
   else
     wdir = gdir
   end if
+  write(1000+nproc_id_global,*) "call write_Rion"; flush(1000+nproc_id_global)!uemoto
   call write_Rion(wdir,system)
+  write(1000+nproc_id_global,*) "call write_Velocity"; flush(1000+nproc_id_global)!uemoto
   call write_Velocity(wdir,system)
+  write(1000+nproc_id_global,*) "call write_bin"; flush(1000+nproc_id_global)!uemoto
   call write_bin(wdir,lg,mg,system,info,spsi,iter,mixing=mixing,is_self_checkpoint=iself)
 end subroutine checkpoint_gs
 
