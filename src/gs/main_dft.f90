@@ -326,11 +326,16 @@ if(yn_spinorbit=='y') call write_mag_decomposed_gs(system,mg,info,spsi)
 ! write GS: analysis option
 write(1000+nproc_id_global,*) "if ... call write_psi"; flush(1000+nproc_id_global)!uemoto
 if(yn_out_psi =='y') call write_psi(lg,mg,system,info,spsi)
+write(1000+nproc_id_global,*) "if ... call write_dns"; flush(1000+nproc_id_global)!uemoto
 if(yn_out_dns =='y') call write_dns(lg,mg,system,info,rho_s)
+write(1000+nproc_id_global,*) "if ... call write_dos"; flush(1000+nproc_id_global)!uemoto
 if(yn_out_dos =='y') call write_dos(system,energy)
+write(1000+nproc_id_global,*) "if ... call write_pdos"; flush(1000+nproc_id_global)!uemoto
 if(yn_out_pdos=='y') call write_pdos(lg,mg,system,info,pp,energy,spsi)
+write(1000+nproc_id_global,*) "if ... call write_elf"; flush(1000+nproc_id_global)!uemoto
 if(yn_out_elf =='y') call write_elf(0,lg,mg,system,info,stencil,rho,srg,srg_scalar,spsi)
 
+write(1000+nproc_id_global,*) "----"; flush(1000+nproc_id_global)!uemoto
 call timer_end(LOG_WRITE_GS_RESULTS)
 
 ! write GS: binary data for restart
