@@ -559,6 +559,7 @@ end subroutine read_bin
 subroutine write_wavefunction(odir,lg,mg,system,info,spsi,is_self_checkpoint)
   use structures, only: s_rgrid, s_dft_system, s_parallel_info, s_orbital
   use communication, only: comm_is_root, comm_summation, comm_bcast
+  use parallelization, only: nproc_id_global,nproc_group_global
 #ifdef USE_MPI
 #else
   use salmon_global, only: method_wf_distributor
