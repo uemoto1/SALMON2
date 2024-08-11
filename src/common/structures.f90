@@ -56,6 +56,7 @@ module structures
     real(8),allocatable :: Rion(:,:)     ! (1:3,1:nion), atom position
     real(8),allocatable :: Velocity(:,:) ! (1:3,1:nion), atomic velocity
     real(8),allocatable :: Force(:,:)    ! (1:3,1:nion), force on atom
+    integer,allocatable :: kion(:)       ! (1:nion)), atomic species
   ! external field
     real(8) :: vec_Ac(3) ! A/c (spatially averaged), A: vector potential, c: speed of light
     type(s_vector) :: Ac_micro ! A/c (microscopic)      ! for single-scale Maxwell-TDDFT

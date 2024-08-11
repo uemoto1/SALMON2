@@ -22,7 +22,7 @@ contains
     use structures
     use parallelization, only: nproc_group_global
     use salmon_global, only: num_fragment, base_directory, nproc_ob, nproc_rgrid, &
-    & nproc_rgrid_tot, nelec, nstate
+    & nproc_rgrid_tot, nelec, nstate, yn_dc
     use initialization_sub, only: init_dft
     use sendrecv_grid, only: dealloc_cache
     implicit none
@@ -53,6 +53,7 @@ contains
     & stencil_dummy,dc%fg_tot,dc%poisson_tot,srg_dummy,dc%srg_scalar_tot,ofile_dummy)
     deallocate(dc%system_tot%rocc)
     call dealloc_cache(srg_dummy)
+    allocate(dc%rho_tot_s(dc%system_tot%nspin),dc%vloc_tot(dc%system_tot%nspin))
     do i=1,dc%system_tot%nspin
       call allocate_scalar(dc%mg_tot,dc%rho_tot_s(i))
       call allocate_scalar(dc%mg_tot,dc%vloc_tot(i))
@@ -219,6 +220,7 @@ contains
   subroutine test_density(dc,lg,system,info,rho_s)
     use structures
     use communication, only: comm_summation
+    use salmon_global, only: natom, kion, rion
     use writefield, only: write_dns
     implicit none
     type(s_dcdft)                    :: dc
@@ -230,6 +232,7 @@ contains
     integer :: ix,iy,iz,ix_tot,iy_tot,iz_tot
     real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3)) :: wrk1,wrk2
     
+    wrk1 = 0d0
     if(info%id_rko==0) then
       do iz=1,dc%nxyz_domain(3); iz_tot = dc%ixyz_frag(3,dc%i_frag) + iz
       do iy=1,dc%nxyz_domain(2); iy_tot = dc%ixyz_frag(2,dc%i_frag) + iy
@@ -238,18 +241,21 @@ contains
       end do
       end do
       end do
-    else
-      wrk1 = 0d0
     end if
     call comm_summation(wrk1,wrk2,dc%lg_tot%num(1)*dc%lg_tot%num(2)*dc%lg_tot%num(3),dc%icomm_tot)
-    do iz_tot=1,dc%lg_tot%num(3)
-    do iy_tot=1,dc%lg_tot%num(2)
-    do ix_tot=1,dc%lg_tot%num(1)
-      dc%rho_tot_s(1)%f(ix_tot,iy_tot,iz_tot) = wrk2(ix_tot,iy_tot,iz_tot)
+    do iz=dc%mg_tot%is(3),dc%mg_tot%ie(3)
+    do iy=dc%mg_tot%is(2),dc%mg_tot%ie(2)
+    do ix=dc%mg_tot%is(1),dc%mg_tot%ie(1)
+      dc%rho_tot_s(1)%f(ix,iy,iz) = wrk2(ix,iy,iz)
     end do
     end do
     end do
     
+    natom = dc%system_tot%nion
+    deallocate(kion,rion)
+    allocate(kion(natom),rion(3,natom))
+    kion = dc%system_tot%kion
+    rion = dc%system_tot%rion
     call write_dns(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%rho_tot_s)
   
   end subroutine test_density

@@ -2873,7 +2873,7 @@ contains
       & stop "DC method (yn_dc=y): num_fragment must be specified."
       if(yn_periodic=='n') stop "DC method (yn_dc=y): yn_periodic=y must be specified."
       if(.not.if_orthogonal_tmp) stop "DC method (yn_dc=y): use orthogonal coordinate."
-      if(nproc_k/=1 .or. num_kgrid(1)*num_kgrid(2)*num_kgrid(3)/=1) &
+      if(num_kgrid(1)*num_kgrid(2)*num_kgrid(3)/=1) &
       & stop "DC method (yn_dc=y): # of k-points must be 1."
       if(dl(1)*dl(2)*dl(3)/=0) stop "DC method (yn_dc=y): use al & num_rgrid."
     end if
