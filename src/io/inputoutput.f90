@@ -589,7 +589,8 @@ contains
       
     namelist/dc/ &
       & num_fragment, &
-      & length_buffer
+      & length_buffer, &
+      & nproc_rgrid_tot
 
 !! == default for &unit ==
     unit_system='au'
@@ -1001,6 +1002,7 @@ contains
 !! == default for &dc
     num_fragment = 0
     length_buffer = 0d0
+    nproc_rgrid_tot = 1
 
     if (comm_is_root(nproc_id_global)) then
       fh_namelist = get_filehandle()
@@ -1616,6 +1618,7 @@ contains
     call comm_bcast(num_fragment ,nproc_group_global)
     call comm_bcast(length_buffer, nproc_group_global)
     length_buffer = length_buffer * ulength_to_au
+    call comm_bcast(nproc_rgrid_tot, nproc_group_global)
   end subroutine read_input_common
 
   subroutine read_atomic_coordinates
@@ -2563,10 +2566,9 @@ contains
       
       if(inml_dc >0)ierr_nml = ierr_nml +1
       write(fh_variables_log, '("#namelist: ",A,", status=",I3)') 'dc', inml_dc
-      write(fh_variables_log, '("#",4X,A,"=",I4)') 'num_fragment(1)',num_fragment(1)
-      write(fh_variables_log, '("#",4X,A,"=",I4)') 'num_fragment(2)',num_fragment(2)
-      write(fh_variables_log, '("#",4X,A,"=",I4)') 'num_fragment(3)',num_fragment(3)
-      write(fh_variables_log, '("#",4X,A,"=",ES12.5)') "length_buffer", length_buffer
+      write(fh_variables_log, '("#",4X,A,"=",3I4)') 'num_fragment',num_fragment(1:3)
+      write(fh_variables_log, '("#",4X,A,"=",3ES12.5)') "length_buffer", length_buffer(1:3)
+      write(fh_variables_log, '("#",4X,A,"=",3I4)') "nproc_rgrid_tot",nproc_rgrid_tot(1:3)
       
       close(fh_variables_log)
     end if
@@ -2865,10 +2867,15 @@ contains
     
     if(yn_dc=='y') then
       if(theory/='dft') stop "DC method (yn_dc=y): theory=dft must be specified."
-      if(iflag_atom_coor/=ntype_atom_coor_cartesian) stop "DC method (yn_dc=y): use cartesian coordinate"
+      if(iflag_atom_coor/=ntype_atom_coor_cartesian) stop "DC method (yn_dc=y): use cartesian coordinate."
       if(temperature < 0d0) stop "DC method (yn_dc=y): temperature must be specified."
       if(num_fragment(1)*num_fragment(2)*num_fragment(3) == 0) &
       & stop "DC method (yn_dc=y): num_fragment must be specified."
+      if(yn_periodic=='n') stop "DC method (yn_dc=y): yn_periodic=y must be specified."
+      if(.not.if_orthogonal_tmp) stop "DC method (yn_dc=y): use orthogonal coordinate."
+      if(nproc_k/=1 .or. num_kgrid(1)*num_kgrid(2)*num_kgrid(3)/=1) &
+      & stop "DC method (yn_dc=y): # of k-points must be 1."
+      if(dl(1)*dl(2)*dl(3)/=0) stop "DC method (yn_dc=y): use al & num_rgrid."
     end if
 
 #ifdef USE_FFTW

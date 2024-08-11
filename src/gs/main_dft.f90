@@ -326,6 +326,7 @@ call timer_begin(LOG_WRITE_GS_RESULTS)
 
 !!!!!!!!! test
 write(*,*) "dc test 2:",energy%E_tot,dc%i_frag !!!!!!!!!
+call test_density(dc,lg,system,info,rho_s)
 
 
 ! write GS: basic data

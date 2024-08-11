@@ -470,17 +470,25 @@ module structures
   type s_dcdft
   ! summation
     integer :: n_frag ! # of fragments (subsystems)
+    integer :: nxyz_domain(3) ! # of r-grid points for each core domain
+    integer,allocatable :: ixyz_frag(:,:) ! r-grid index of the fragment origin
+    real(8),allocatable :: rxyz_frag(:,:) ! position of the fragment origin
   ! total system
     integer :: icomm_tot    ! MPI communicator
+    character(256) :: base_directory 
     real(8) :: elec_num_tot ! total electron number
     real(8) :: mu_tot       ! chemical potential of the total system
-    type(s_dft_system) :: system_tot
-    type(s_rgrid) :: lg_tot
+    type(s_dft_system)      :: system_tot
+    type(s_parallel_info)   :: info_tot
+    type(s_rgrid)           :: lg_tot,mg_tot
+    type(s_reciprocal_grid) :: fg_tot
+    type(s_poisson)         :: poisson_tot
+    type(s_sendrecv_grid)   :: srg_scalar_tot
     type(s_scalar),allocatable :: rho_tot_s(:),vloc_tot(:) ! density and local KS potential for the total system
-  ! fragment (subsystem)
+  ! own fragment
     integer :: i_frag       ! fragment index
-    integer :: ixyz_frag(3) ! index of the real-space coordinate for the fragment origin
     integer :: num_kos_frag ! (# of k-points) x (# of orbitals) x (# of spin states) for the fragment
+    integer :: nstate_frag  ! nstate for the fragment
     real(8),allocatable :: esp_frag(:) ! (1:num_kos_frag), eigenenergies of the fragment
     real(8),allocatable :: rne_frag(:) ! (1:num_kos_frag), \int_{domain} d^3r | \psi(r) |^2
   end type s_dcdft
