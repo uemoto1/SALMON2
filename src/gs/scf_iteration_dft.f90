@@ -50,7 +50,6 @@ use occupation
 use prep_pp_sub
 use mixing_sub
 use checkpoint_restart_sub
-use hamiltonian
 use total_energy
 use init_gs, only: init_wf
 use density_matrix_and_energy_plusU_sub, only: calc_density_matrix_and_energy_plusU, PLUS_U_ON
@@ -101,18 +100,10 @@ endif
 
 if(nscf_init_mix_zero.gt.1)then
    icnt_conv_nomix = 0
-   mixing%flag_mix_zero = .true.
    DFT_NoMix_Iteration : do iter=1,nscf_init_mix_zero
 
       if(yn_jm=='n') rion_update = check_rion_update() .or. (iter == 1)
-      call copy_density(iter,system%nspin,mg,rho_s,mixing)
-      call scf_iteration_step(lg,mg,system,info,stencil,  &
-                     srg,srg_scalar,spsi,shpsi,rho,rho_jm,rho_s,  &
-                     cg,ppg,V_local,  &
-                     iter,  &
-                     nscf_init_no_diagonal, mixing, iter,  &
-                     poisson,fg,Vh,xc_func,ppn,Vxc,energy)
-      call update_vlocal(mg,system%nspin,Vh,Vpsl,Vxc,V_local)
+      call solve_orbitals(mg,system,info,stencil,spsi,shpsi,srg,cg,ppg,v_local,iter,nscf_init_no_diagonal)
       call timer_begin(LOG_CALC_TOTAL_ENERGY)
       call calc_eigen_energy(energy,spsi,shpsi,sttpsi,system,info,mg,V_local,stencil,srg,ppg)
       select case(iperiodic)
@@ -147,7 +138,6 @@ if(nscf_init_mix_zero.gt.1)then
       endif
 
    end do DFT_NoMix_Iteration
-   mixing%flag_mix_zero = .false.
 endif
 
 flag_conv = .false.
@@ -181,13 +171,11 @@ DFT_Iteration : do iter=Miter+1,nscf
       end if
    end if
    call copy_density(Miter,system%nspin,mg,rho_s,mixing)
-   call scf_iteration_step(lg,mg,system,info,stencil,  &
-                     srg,srg_scalar,spsi,shpsi,rho,rho_jm,rho_s,  &
-                     cg,ppg,V_local,  &
-                     Miter,  &
-                     nscf_init_no_diagonal, mixing, iter,  &
-                     poisson,fg,Vh,xc_func,ppn,Vxc,energy)
-   call update_vlocal(mg,system%nspin,Vh,Vpsl,Vxc,V_local)
+   call solve_orbitals(mg,system,info,stencil,spsi,shpsi,srg,cg,ppg,v_local,miter,nscf_init_no_diagonal)
+   if(calc_mode/='DFT_BAND')then
+     call update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,iter, &
+               spsi,srg,srg_scalar,poisson,fg,rho,rho_s,rho_jm,Vpsl,Vh,Vxc,v_local,mixing,energy)
+   end if
    call timer_begin(LOG_CALC_TOTAL_ENERGY)
    if( PLUS_U_ON )then
       call calc_density_matrix_and_energy_plusU( spsi,ppg,info,system,energy%E_U )
