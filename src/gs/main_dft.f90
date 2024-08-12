@@ -87,7 +87,7 @@ integer :: ilevel_print
 if(theory=='dft_band'.and.iperiodic/=3) return
 
 if(yn_dc=='y') then
-  call init_dcdft(dc)
+  call init_dcdft(dc,mixing)
   ilevel_print = 2
 else
   ilevel_print = 3
@@ -322,12 +322,6 @@ call fipp_stop ! performance profiling
 
 !------------ Writing part -----------
 call timer_begin(LOG_WRITE_GS_RESULTS)
-
-
-!!!!!!!!! test
-write(*,*) "dc test 2:",energy%E_tot,dc%i_frag !!!!!!!!!
-call test_density(dc,lg,system,info,rho_s)
-
 
 ! write GS: basic data
 call write_band_information(system,energy)

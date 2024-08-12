@@ -218,7 +218,7 @@ real(8) :: rNe0,rNe
   spsi%update_zwf_overlap = .false.
 
   mixing%num_rho_stock = 21
-  call init_mixing(nspin,mg,mixing)
+  if(yn_dc=='n') call init_mixing(nspin,mg,mixing)
 
   ! restart from binary
   if (yn_restart == 'y') then

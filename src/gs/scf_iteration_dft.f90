@@ -176,7 +176,7 @@ DFT_Iteration : do iter=Miter+1,nscf
       ! for calc_total_energy_periodic
       if(yn_jm=='n') rion_update = check_rion_update() .or. (iter == 1)
   
-      if(temperature>=0.d0 .and. Miter>nscf_init_redistribution) then
+      if(temperature>=0.d0 .and. Miter>nscf_init_redistribution .and. yn_dc=='n') then
          call ne2mu(energy,system,ilevel_print)
       end if
    end if

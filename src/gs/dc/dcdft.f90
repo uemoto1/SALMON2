@@ -18,7 +18,7 @@ module dcdft
   implicit none
 contains
 
-  subroutine init_dcdft(dc)
+  subroutine init_dcdft(dc,mixing)
     use structures
     use parallelization, only: nproc_group_global
     use salmon_global, only: num_fragment, base_directory, nproc_ob, nproc_rgrid, &
@@ -26,7 +26,8 @@ contains
     use initialization_sub, only: init_dft
     use sendrecv_grid, only: dealloc_cache
     implicit none
-    type(s_dcdft),intent(inout) :: dc
+    type(s_dcdft) ,intent(inout) :: dc
+    type(s_mixing),intent(inout) :: mixing
     !
     integer :: i
     integer :: nproc_ob_tmp, nproc_rgrid_tmp(3)
@@ -58,6 +59,8 @@ contains
       call allocate_scalar(dc%mg_tot,dc%rho_tot_s(i))
       call allocate_scalar(dc%mg_tot,dc%vloc_tot(i))
     end do
+    mixing%num_rho_stock = 21
+    call init_mixing(dc%system_tot%nspin,dc%mg_tot,mixing)
     
   ! fragment
     nproc_ob = nproc_ob_tmp ! override
@@ -194,7 +197,7 @@ contains
     ! set variables for own fragment
     
     ! nelec (total system) --> nelec (fragment)
-      nelec = nelec / dc%n_frag !!!!!!!!! test !!!!!!!!
+      nelec = nelec * (natom_frag(dc%i_frag)/natom) !!!!!!!!! test !!!!!!!!
     
     ! al, num_rgrid (total system) --> al, num_rgrid (fragment)
       al = ldomain + 2d0*length_buffer
@@ -206,15 +209,12 @@ contains
       allocate(rion(3,natom),kion(natom))
       rion(1:3,1:natom) = rion_frag(1:3,1:natom,dc%i_frag)
       kion(1:natom) = kion_frag(1:natom,dc%i_frag)
+      
+      ! base_directory =  !!!!!!!!!! future work
     
     end subroutine init_fragment
     
   end subroutine init_dcdft
-  
-  subroutine update_density_and_potential_dcdft
-    implicit none
-  
-  end subroutine update_density_and_potential_dcdft
   
 !!!!!!! test
   subroutine test_density(dc,lg,system,info,rho_s)

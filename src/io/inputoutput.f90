@@ -2868,7 +2868,7 @@ contains
     if(yn_dc=='y') then
       if(theory/='dft') stop "DC method (yn_dc=y): theory=dft must be specified."
       if(iflag_atom_coor/=ntype_atom_coor_cartesian) stop "DC method (yn_dc=y): use cartesian coordinate."
-      if(temperature < 0d0) stop "DC method (yn_dc=y): temperature must be specified."
+      !if(temperature < 0d0) stop "DC method (yn_dc=y): temperature must be specified."
       if(num_fragment(1)*num_fragment(2)*num_fragment(3) == 0) &
       & stop "DC method (yn_dc=y): num_fragment must be specified."
       if(yn_periodic=='n') stop "DC method (yn_dc=y): yn_periodic=y must be specified."
@@ -2876,6 +2876,9 @@ contains
       if(num_kgrid(1)*num_kgrid(2)*num_kgrid(3)/=1) &
       & stop "DC method (yn_dc=y): # of k-points must be 1."
       if(dl(1)*dl(2)*dl(3)/=0) stop "DC method (yn_dc=y): use al & num_rgrid."
+      if(yn_restart=='y') stop "DC method (yn_dc=y): yn_restart=y is not supported."
+      if(nscf_init_mix_zero.gt.1) stop "DC method (yn_dc=y): nscf_init_mix_zero is not supported."
+      !!!!! if(write_gs_restart_data/='wfn') stop ! future work
     end if
 
 #ifdef USE_FFTW
