@@ -52,6 +52,7 @@ use total_energy
 use init_gs, only: init_wf
 use density_matrix_and_energy_plusU_sub, only: calc_density_matrix_and_energy_plusU, PLUS_U_ON
 use noncollinear_module, only: calc_magnetization
+use dcdft
 implicit none
 integer :: ix,iy,iz,ik,is
 integer :: ilevel_print !=3:print-all
@@ -170,13 +171,30 @@ DFT_Iteration : do iter=Miter+1,nscf
       end if
    end if
    call solve_orbitals(mg,system,info,stencil,spsi,shpsi,srg,cg,ppg,v_local,miter,nscf_init_no_diagonal)
-   if(calc_mode/='DFT_BAND')then
+   if(calc_mode/='DFT_BAND' .and. yn_dc=='n') then
      call copy_density(Miter,system%nspin,mg,rho_s,mixing)
      call timer_begin(LOG_CALC_RHO)
      call calc_density(system,rho_s,spsi,info,mg)
      call timer_end(LOG_CALC_RHO)
      call update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,iter, &
                spsi,srg,srg_scalar,poisson,fg,rho,rho_s,rho_jm,Vpsl,Vh,Vxc,v_local,mixing,energy)
+   else if(yn_dc=='y') then
+   ! Divide-and-Conquer method
+     call copy_density(Miter,system%nspin,dc%mg_tot,dc%rho_tot_s,mixing)
+     ! rho_s for fragments
+     call timer_begin(LOG_CALC_RHO)
+     call calc_density(system,rho_s,spsi,info,mg)
+     call timer_end(LOG_CALC_RHO)
+     ! rho_s (fragment) --> dc%rho_tot_s (total system) !!!!!! future work: occupancy, spsi
+     call calc_rho_total_dcdft(system%nspin,lg,mg,info,rho_s,dc) !!!!!! future work: occupancy, spsi
+     call update_density_and_potential(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot, &
+     & stencil,xc_func,ppn,iter,spsi,srg,srg_scalar, &
+     & dc%poisson_tot,dc%fg_tot,dc%rho_tot,dc%rho_tot_s, &
+     & rho_jm, &
+     & dc%Vpsl_tot,dc%Vh_tot,dc%Vxc_tot,dc%vloc_tot, &
+     mixing,energy)
+     ! dc%vloc_tot (total system) --> v_local (fragment)
+     call calc_vlocal_fragment_dcdft(system%nspin,lg,mg,info,v_local,dc)
    end if
    call timer_begin(LOG_CALC_TOTAL_ENERGY)
    if( PLUS_U_ON )then

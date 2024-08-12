@@ -491,6 +491,7 @@ module structures
     integer :: i_frag       ! fragment index
     integer :: num_kos_frag ! (# of k-points) x (# of orbitals) x (# of spin states) for the fragment
     integer :: nstate_frag  ! nstate for the fragment
+    integer,allocatable :: jxyz_tot(:,:)  ! r-grid (fragment) --> r-grid (total)
     real(8),allocatable :: esp_frag(:) ! (1:num_kos_frag), eigenenergies of the fragment
     real(8),allocatable :: rne_frag(:) ! (1:num_kos_frag), \int_{domain} d^3r | \psi(r) |^2
   end type s_dcdft

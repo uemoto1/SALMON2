@@ -21,7 +21,7 @@ contains
   subroutine init_dcdft(dc,mixing)
     use structures
     use parallelization, only: nproc_group_global
-    use salmon_global, only: num_fragment, base_directory, nproc_ob, nproc_rgrid, &
+    use salmon_global, only: num_fragment, base_directory, nproc_k, nproc_ob, nproc_rgrid, &
     & nproc_rgrid_tot, nelec, nstate, yn_dc
     implicit none
     type(s_dcdft) ,intent(inout) :: dc
@@ -40,7 +40,9 @@ contains
     
     dc%nstate_frag = nstate ! nstate for the fragment !!!!!! future work: new input variable
     
-    !nproc_k must be 1 for both the total system and fragments.
+    if(nproc_k/=1) then
+      stop "DC method (yn_dc=y): nproc_k must be 1 for both the total system and fragments."
+    end if
     nproc_ob_tmp = nproc_ob
     nproc_rgrid_tmp = nproc_rgrid
     
@@ -74,9 +76,9 @@ contains
       deallocate(dc%system_tot%rocc)
       call dealloc_cache(srg_dummy)
       
-      call allocate_scalar(dc%rho_tot)
-      call allocate_scalar(dc%vh_tot)
-      call allocate_scalar(dc%vpsl_tot)
+      call allocate_scalar(dc%mg_tot,dc%rho_tot)
+      call allocate_scalar(dc%mg_tot,dc%vh_tot)
+      call allocate_scalar(dc%mg_tot,dc%vpsl_tot)
       allocate(dc%rho_tot_s(dc%system_tot%nspin),dc%vloc_tot(dc%system_tot%nspin),dc%vxc_tot(dc%system_tot%nspin))
       do i=1,dc%system_tot%nspin
         call allocate_scalar(dc%mg_tot,dc%rho_tot_s(i))
@@ -221,7 +223,7 @@ contains
     ! set variables for own fragment
     
     ! nelec (total system) --> nelec (fragment)
-      nelec = nelec * (natom_frag(dc%i_frag)/natom) !!!!!!!!! test !!!!!!!!
+      nelec = nelec * natom_frag(dc%i_frag) / natom !!!!!!!!! test !!!!!!!!
     
     ! al, num_rgrid (total system) --> al, num_rgrid (fragment)
       al = ldomain + 2d0*length_buffer
@@ -234,11 +236,119 @@ contains
       rion(1:3,1:natom) = rion_frag(1:3,1:natom,dc%i_frag)
       kion(1:natom) = kion_frag(1:natom,dc%i_frag)
       
-      ! base_directory =  !!!!!!!!!! future work
+    ! base_directory =  !!!!!!!!!! future work
+      
+    ! dc%jxyz_tot: r-grid (fragment) --> r-grid (total)
+      allocate(dc%jxyz_tot(maxval(num_rgrid),3))
+      do n=1,3 ! x,y,z
+        do i=1,num_rgrid(n) ! r-grid (fragment)
+          if(i <= dc%nxyz_domain(n) + nxyz_buffer(n)) then
+            j = i + dc%ixyz_frag(n,dc%i_frag)
+          else
+            j = ( i - num_rgrid(n) ) + dc%ixyz_frag(n,dc%i_frag) ! minus region
+          end if
+          j = mod(j+dc%lg_tot%num(n)-1,dc%lg_tot%num(n))+1
+          dc%jxyz_tot(i,n) = j ! r-grid (total)
+        end do
+      end do
     
     end subroutine init_fragment
     
   end subroutine init_dcdft
+  
+  ! rho_s (fragment) --> dc%rho_tot_s (total system) !!!!!! future work: occupancy, spsi
+  subroutine calc_rho_total_dcdft(nspin,lg,mg,info,rho_s,dc)
+    use structures
+    use communication, only: comm_summation
+    implicit none
+    integer,              intent(in) :: nspin
+    type(s_rgrid),        intent(in) :: lg,mg
+    type(s_parallel_info),intent(in) :: info
+    type(s_scalar),       intent(in) :: rho_s(nspin)
+    type(s_dcdft)                    :: dc
+    !
+    integer :: ix,iy,iz,ispin,ix_tot,iy_tot,iz_tot
+    real(8),dimension(lg%is(1):lg%ie(1),lg%is(2):lg%ie(2),lg%is(3):lg%ie(3),1:nspin) :: frg_tmp,frg
+    real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3),1:nspin) :: tot_tmp,tot
+    
+    ! rho_s (fragment)
+    frg_tmp = 0d0
+    do ispin=1,nspin
+    do iz=mg%is(3),mg%ie(3)
+    do iy=mg%is(2),mg%ie(2)
+    do ix=mg%is(1),mg%ie(1)
+      frg_tmp(ix,iy,iz,ispin) = rho_s(ispin)%f(ix,iy,iz)
+    end do
+    end do
+    end do
+    end do
+    call comm_summation(frg_tmp,frg,lg%num(1)*lg%num(2)*lg%num(3)*nspin,info%icomm_r)
+    
+    ! rho_s (total)
+    tot_tmp = 0d0
+    if(info%id_rko==0) then
+      do ispin=1,nspin
+      do iz=1,dc%nxyz_domain(3); iz_tot = dc%ixyz_frag(3,dc%i_frag) + iz
+      do iy=1,dc%nxyz_domain(2); iy_tot = dc%ixyz_frag(2,dc%i_frag) + iy
+      do ix=1,dc%nxyz_domain(1); ix_tot = dc%ixyz_frag(1,dc%i_frag) + ix
+        tot_tmp(ix_tot,iy_tot,iz_tot,ispin) = frg(ix,iy,iz,ispin)
+      end do
+      end do
+      end do
+      end do
+    end if
+    call comm_summation(tot_tmp,tot,dc%lg_tot%num(1)*dc%lg_tot%num(2)*dc%lg_tot%num(3)*nspin,dc%icomm_tot)
+    do ispin=1,nspin
+    do iz=dc%mg_tot%is(3),dc%mg_tot%ie(3)
+    do iy=dc%mg_tot%is(2),dc%mg_tot%ie(2)
+    do ix=dc%mg_tot%is(1),dc%mg_tot%ie(1)
+      dc%rho_tot_s(ispin)%f(ix,iy,iz) = tot(ix,iy,iz,ispin)
+    end do
+    end do
+    end do
+    end do
+    
+  end subroutine calc_rho_total_dcdft
+  
+  ! dc%vloc_tot (total system) --> v_local (fragment)
+  subroutine calc_vlocal_fragment_dcdft(nspin,lg,mg,info,vloc,dc)
+    use structures
+    use communication, only: comm_summation
+    implicit none
+    integer,              intent(in) :: nspin
+    type(s_rgrid),        intent(in) :: lg,mg
+    type(s_parallel_info),intent(in) :: info
+    type(s_scalar)                   :: vloc(nspin)
+    type(s_dcdft)                    :: dc
+    !
+    integer :: ix,iy,iz,ispin,ix_tot,iy_tot,iz_tot
+    real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3),1:nspin) :: tot_tmp,tot
+    
+    ! vloc (total)
+    tot_tmp = 0d0
+    do ispin=1,nspin
+    do iz=dc%mg_tot%is(3),dc%mg_tot%ie(3)
+    do iy=dc%mg_tot%is(2),dc%mg_tot%ie(2)
+    do ix=dc%mg_tot%is(1),dc%mg_tot%ie(1)
+      tot_tmp(ix,iy,iz,ispin) = dc%vloc_tot(ispin)%f(ix,iy,iz)
+    end do
+    end do
+    end do
+    end do
+    call comm_summation(tot_tmp,tot,dc%lg_tot%num(1)*dc%lg_tot%num(2)*dc%lg_tot%num(3)*nspin,dc%icomm_tot)
+    
+    ! vloc (fragment)
+    do ispin=1,nspin
+    do iz=mg%is(3),mg%ie(3) ; iz_tot = dc%jxyz_tot(iz,3)
+    do iy=mg%is(2),mg%ie(2) ; iy_tot = dc%jxyz_tot(iy,2)
+    do ix=mg%is(1),mg%ie(1) ; ix_tot = dc%jxyz_tot(ix,1)
+      vloc(ispin)%f(ix,iy,iz) = tot(ix_tot,iy_tot,iz_tot,ispin)
+    end do
+    end do
+    end do
+    end do
+    
+  end subroutine calc_vlocal_fragment_dcdft
   
 !!!!!!! test
   subroutine test_density(dc,lg,system,info,rho_s)
