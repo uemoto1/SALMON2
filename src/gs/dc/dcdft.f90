@@ -23,8 +23,6 @@ contains
     use parallelization, only: nproc_group_global
     use salmon_global, only: num_fragment, base_directory, nproc_ob, nproc_rgrid, &
     & nproc_rgrid_tot, nelec, nstate, yn_dc
-    use initialization_sub, only: init_dft
-    use sendrecv_grid, only: dealloc_cache
     implicit none
     type(s_dcdft) ,intent(inout) :: dc
     type(s_mixing),intent(inout) :: mixing
@@ -42,7 +40,7 @@ contains
     
     dc%nstate_frag = nstate ! nstate for the fragment !!!!!! future work: new input variable
     
-    ! nproc_k must be 1 for both the total system and fragments.
+    !nproc_k must be 1 for both the total system and fragments.
     nproc_ob_tmp = nproc_ob
     nproc_rgrid_tmp = nproc_rgrid
     
@@ -50,17 +48,7 @@ contains
     nproc_ob = 1 ! override
     nproc_rgrid = nproc_rgrid_tot ! override
     nstate = nelec ! override !!!!!! future work: remove
-    call init_dft(dc%icomm_tot,dc%info_tot,dc%lg_tot,dc%mg_tot,dc%system_tot, &
-    & stencil_dummy,dc%fg_tot,dc%poisson_tot,srg_dummy,dc%srg_scalar_tot,ofile_dummy)
-    deallocate(dc%system_tot%rocc)
-    call dealloc_cache(srg_dummy)
-    allocate(dc%rho_tot_s(dc%system_tot%nspin),dc%vloc_tot(dc%system_tot%nspin))
-    do i=1,dc%system_tot%nspin
-      call allocate_scalar(dc%mg_tot,dc%rho_tot_s(i))
-      call allocate_scalar(dc%mg_tot,dc%vloc_tot(i))
-    end do
-    mixing%num_rho_stock = 21
-    call init_mixing(dc%system_tot%nspin,dc%mg_tot,mixing)
+    call init_total
     
   ! fragment
     nproc_ob = nproc_ob_tmp ! override
@@ -70,6 +58,42 @@ contains
     call init_fragment
     
   contains
+  
+    subroutine init_total
+      use initialization_sub, only: init_dft
+      use sendrecv_grid, only: dealloc_cache
+      use mixing_sub, only: init_mixing
+      use salmon_pp, only: read_pslfile
+      use prep_pp_sub, only: init_ps
+      implicit none
+      type(s_pp_info) :: pp_tmp
+      type(s_pp_grid) :: ppg_tmp
+      
+      call init_dft(dc%icomm_tot,dc%info_tot,dc%lg_tot,dc%mg_tot,dc%system_tot, &
+      & stencil_dummy,dc%fg_tot,dc%poisson_tot,srg_dummy,dc%srg_scalar_tot,ofile_dummy)
+      deallocate(dc%system_tot%rocc)
+      call dealloc_cache(srg_dummy)
+      
+      call allocate_scalar(dc%rho_tot)
+      call allocate_scalar(dc%vh_tot)
+      call allocate_scalar(dc%vpsl_tot)
+      allocate(dc%rho_tot_s(dc%system_tot%nspin),dc%vloc_tot(dc%system_tot%nspin),dc%vxc_tot(dc%system_tot%nspin))
+      do i=1,dc%system_tot%nspin
+        call allocate_scalar(dc%mg_tot,dc%rho_tot_s(i))
+        call allocate_scalar(dc%mg_tot,dc%vloc_tot(i))
+        call allocate_scalar(dc%mg_tot,dc%vxc_tot(i))
+      end do
+      
+    ! mixing
+      mixing%num_rho_stock = 21
+      call init_mixing(dc%system_tot%nspin,dc%mg_tot,mixing)
+      
+    ! Vpsl
+      call read_pslfile(dc%system_tot,pp_tmp)
+      call init_ps(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%fg_tot,dc%poisson_tot, &
+      & pp_tmp,ppg_tmp,dc%vpsl_tot)
+    
+    end subroutine init_total
   
     subroutine init_comm_frag
       use parallelization

@@ -28,7 +28,7 @@ subroutine scf_iteration_dft( Miter,rion_update,sum1,  &
                               V_local,Vh,Vxc,Vpsl,xc_func,  &
                               pp,ppg,ppn,  &
                               rho_old,Vlocal_old,  &
-                              band,ilevel_print )
+                              band,ilevel_print,dc)
 use math_constants, only: pi, zi
 use structures
 use inputoutput
@@ -85,6 +85,7 @@ type(s_ewald_ion_ion) :: ewald
 type(s_cg)     :: cg
 type(s_mixing) :: mixing
 type(s_band_dft) :: band
+type(s_dcdft),optional :: dc
 
 logical :: rion_update, flag_conv
 integer :: i,j, icnt_conv_nomix

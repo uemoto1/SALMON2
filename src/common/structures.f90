@@ -485,7 +485,8 @@ module structures
     type(s_reciprocal_grid) :: fg_tot
     type(s_poisson)         :: poisson_tot
     type(s_sendrecv_grid)   :: srg_scalar_tot
-    type(s_scalar),allocatable :: rho_tot_s(:),vloc_tot(:) ! density and local KS potential for the total system
+    type(s_scalar) :: vpsl_tot,vh_tot,rho_tot
+    type(s_scalar),allocatable :: rho_tot_s(:),vloc_tot(:),vxc_tot(:)
   ! own fragment
     integer :: i_frag       ! fragment index
     integer :: num_kos_frag ! (# of k-points) x (# of orbitals) x (# of spin states) for the fragment

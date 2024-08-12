@@ -2878,6 +2878,7 @@ contains
       if(dl(1)*dl(2)*dl(3)/=0) stop "DC method (yn_dc=y): use al & num_rgrid."
       if(yn_restart=='y') stop "DC method (yn_dc=y): yn_restart=y is not supported."
       if(nscf_init_mix_zero.gt.1) stop "DC method (yn_dc=y): nscf_init_mix_zero is not supported."
+      if(yn_jm=='y') stop "DC method (yn_dc=y): yn_jm=y is not supported."
       !!!!! if(write_gs_restart_data/='wfn') stop ! future work
     end if
 
