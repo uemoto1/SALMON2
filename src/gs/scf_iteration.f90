@@ -71,12 +71,11 @@ subroutine solve_orbitals(mg,system,info,stencil,spsi,shpsi,srg,cg,ppg,vlocal,  
 
 end subroutine solve_orbitals
 
-subroutine update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,iter,miter, &
+subroutine update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,iter, &
                spsi,srg,srg_scalar,poisson,fg,rho,rho_s,rho_jm,Vpsl,Vh,Vxc,vlocal,mixing,energy )
   use structures
   use salmon_global, only: method_mixing,yn_jm,yn_spinorbit
   use timer
-  use density_matrix, only: calc_density
   use mixing_sub
   use hartree_sub, only: hartree
   use salmon_xc, only: exchange_correlation
@@ -89,7 +88,7 @@ subroutine update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,it
   type(s_stencil),        intent(in)    :: stencil
   type(s_xc_functional),  intent(in)    :: xc_func
   type(s_pp_nlcc),        intent(in)    :: ppn
-  integer,                intent(in)    :: iter,miter
+  integer,                intent(in)    :: iter
   type(s_orbital),        intent(inout) :: spsi
   type(s_sendrecv_grid),  intent(inout) :: srg,srg_scalar
   type(s_poisson),        intent(inout) :: poisson
@@ -101,12 +100,6 @@ subroutine update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,it
   type(s_dft_energy),     intent(inout) :: energy
   !
   integer :: j
-  
-  call copy_density(Miter,system%nspin,mg,rho_s,mixing)
-  
-  call timer_begin(LOG_CALC_RHO)
-
-  call calc_density(system,rho_s,spsi,info,mg)
 
   select case(method_mixing)
   case ('simple')
@@ -123,7 +116,6 @@ subroutine update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,it
   case default
     stop 'Invalid method_mixing. Specify any one of "simple" or "broyden" or "pulay" for method_mixing.'
   end select
-  call timer_end(LOG_CALC_RHO)
 
   rho%f = 0d0
   do j=1,system%nspin
