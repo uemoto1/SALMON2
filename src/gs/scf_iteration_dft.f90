@@ -48,7 +48,7 @@ use code_optimization
 use initialization_sub
 use occupation
 use prep_pp_sub
-use mixing_sub
+use mixing_sub, only: check_mixing_half
 use checkpoint_restart_sub
 use total_energy
 use init_gs, only: init_wf
@@ -170,10 +170,9 @@ DFT_Iteration : do iter=Miter+1,nscf
          call ne2mu(energy,system,ilevel_print)
       end if
    end if
-   call copy_density(Miter,system%nspin,mg,rho_s,mixing)
    call solve_orbitals(mg,system,info,stencil,spsi,shpsi,srg,cg,ppg,v_local,miter,nscf_init_no_diagonal)
    if(calc_mode/='DFT_BAND')then
-     call update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,iter, &
+     call update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,iter,miter, &
                spsi,srg,srg_scalar,poisson,fg,rho,rho_s,rho_jm,Vpsl,Vh,Vxc,v_local,mixing,energy)
    end if
    call timer_begin(LOG_CALC_TOTAL_ENERGY)
