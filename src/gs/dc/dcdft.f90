@@ -147,7 +147,7 @@ write(*,*) "test_dcdft 1:",myrank_F,nproc_F,dc%i_frag,myrank,nproc  !!!!!!!!! te
       integer :: i,j,k,n
       integer :: iatom,iatom_frag,nxyz_buffer(3)
       integer :: kion_frag(natom,dc%n_frag),natom_frag(dc%n_frag)
-      real(8) :: dr
+      real(8) :: dr,bn,wrk
       real(8) :: r1(3),r2(3)
       real(8) :: ldomain(3)
       real(8) :: rion_frag(3,natom,dc%n_frag)
@@ -170,9 +170,11 @@ write(*,*) "test_dcdft 1:",myrank_F,nproc_F,dc%i_frag,myrank,nproc  !!!!!!!!! te
         if(mod(num_rgrid(n),num_fragment(n))==0) then
           dc%nxyz_domain(n) = num_rgrid(n) / num_fragment(n)
           dr = al(n)/dble(num_rgrid(n))
-          dr = length_buffer(n)/dr
-          if(dr-dble(int(dr)) /= 0d0) stop "DC method (yn_dc=y): grid mismatch of length_buffer"
-          nxyz_buffer(n) = int(dr)
+          bn = length_buffer(n)/dr
+          wrk = abs(bn-dble(int(bn)))
+write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
+          if(wrk /= 0d0) stop "DC method (yn_dc=y): grid mismatch of length_buffer"
+          nxyz_buffer(n) = int(bn)
         else
           stop "DC method (yn_dc=y): mod(num_rgrid,num_fragment) /= 0"
         end if
