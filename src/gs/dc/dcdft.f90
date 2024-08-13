@@ -166,10 +166,10 @@ write(*,*) "test_dcdft 1:",myrank_F,nproc_F,dc%i_frag,myrank,nproc  !!!!!!!!! te
           dc%nxyz_domain(n) = num_rgrid(n) / num_fragment(n)
           dr = al(n)/dble(num_rgrid(n))
           bn = length_buffer(n)/dr
-          wrk = abs(bn-dble(int(bn)))
+          wrk = abs(bn-dble(nint(bn)))
 write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
-          if(wrk /= 0d0) stop "DC method (yn_dc=y): grid mismatch of length_buffer"
-          nxyz_buffer(n) = int(bn)
+          if(wrk > 1d-15) stop "DC method (yn_dc=y): grid mismatch of length_buffer"
+          nxyz_buffer(n) = nint(bn)
         else
           stop "DC method (yn_dc=y): mod(num_rgrid,num_fragment) /= 0"
         end if
