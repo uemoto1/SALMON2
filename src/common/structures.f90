@@ -475,8 +475,8 @@ module structures
     integer,allocatable :: ixyz_frag(:,:) ! r-grid index of the fragment origin
     real(8),allocatable :: rxyz_frag(:,:) ! position of the fragment origin
   ! total system
-    integer :: icomm_tot    ! MPI communicator
-    character(256) :: base_directory 
+    integer :: icomm_tot, id_tot, isize_tot ! MPI communicator, process ID, & # of processes
+    character(256) :: base_directory
     real(8) :: elec_num_tot ! total electron number
     real(8) :: mu_tot       ! chemical potential of the total system
     type(s_dft_system)      :: system_tot
@@ -489,6 +489,7 @@ module structures
     type(s_scalar),allocatable :: rho_tot_s(:),vloc_tot(:),vxc_tot(:)
   ! own fragment
     integer :: i_frag       ! fragment index
+    integer :: icomm_frag, id_frag, isize_frag ! MPI communicator, process ID, & # of processes
     integer :: num_kos_frag ! (# of k-points) x (# of orbitals) x (# of spin states) for the fragment
     integer :: nstate_frag  ! nstate for the fragment
     integer,allocatable :: jxyz_tot(:,:)  ! r-grid (fragment) --> r-grid (total)

@@ -188,9 +188,10 @@ DFT_Iteration : do iter=Miter+1,nscf
      ! rho_s (fragment) --> dc%rho_tot_s (total system) !!!!!! future work: occupancy, spsi
      call calc_rho_total_dcdft(system%nspin,lg,mg,info,rho_s,dc) !!!!!! future work: occupancy, spsi
      call update_density_and_potential(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot, &
-     & stencil,xc_func,ppn,iter,spsi,srg,srg_scalar, &
+     & stencil,xc_func,ppn,iter, &
+     & spsi,srg,srg_scalar, & ! dummy
      & dc%poisson_tot,dc%fg_tot,dc%rho_tot,dc%rho_tot_s, &
-     & rho_jm, &
+     & rho_jm, & ! dummy
      & dc%Vpsl_tot,dc%Vh_tot,dc%Vxc_tot,dc%vloc_tot, &
      mixing,energy)
      ! dc%vloc_tot (total system) --> v_local (fragment)

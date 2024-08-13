@@ -20,20 +20,14 @@ contains
 
   subroutine init_dcdft(dc,mixing)
     use structures
-    use parallelization, only: nproc_group_global
     use salmon_global, only: num_fragment, base_directory, nproc_k, nproc_ob, nproc_rgrid, &
     & nproc_rgrid_tot, nelec, nstate, yn_dc
     implicit none
     type(s_dcdft) ,intent(inout) :: dc
     type(s_mixing),intent(inout) :: mixing
     !
-    integer :: i
     integer :: nproc_ob_tmp, nproc_rgrid_tmp(3)
-    type(s_stencil) :: stencil_dummy
-    type(s_sendrecv_grid):: srg_dummy
-    type(s_ofile) :: ofile_dummy
     
-    dc%icomm_tot = nproc_group_global
     dc%n_frag = num_fragment(1)*num_fragment(2)*num_fragment(3)
     dc%elec_num_tot = dble(nelec)
     dc%base_directory = trim(base_directory)
@@ -64,14 +58,23 @@ contains
   contains
   
     subroutine init_total
+      use parallelization, only: nproc_group_global, nproc_id_global, nproc_size_global
       use initialization_sub, only: init_dft
       use sendrecv_grid, only: dealloc_cache
       use mixing_sub, only: init_mixing
       use salmon_pp, only: read_pslfile
       use prep_pp_sub, only: init_ps
       implicit none
+      integer :: i
       type(s_pp_info) :: pp_tmp
       type(s_pp_grid) :: ppg_tmp
+      type(s_stencil) :: stencil_dummy
+      type(s_sendrecv_grid):: srg_dummy
+      type(s_ofile) :: ofile_dummy
+      
+      dc%icomm_tot = nproc_group_global
+      dc%id_tot = nproc_id_global
+      dc%isize_tot = nproc_size_global
       
       call init_dft(dc%icomm_tot,dc%info_tot,dc%lg_tot,dc%mg_tot,dc%system_tot, &
       & stencil_dummy,dc%fg_tot,dc%poisson_tot,srg_dummy,dc%srg_scalar_tot,ofile_dummy)
@@ -100,24 +103,19 @@ contains
     end subroutine init_total
   
     subroutine init_comm_frag
-      use parallelization
+      use parallelization, only: nproc_group_global, nproc_id_global, nproc_size_global
       use mpi !!!!! future work --> wrapper
       implicit none
-      integer :: nproc,myrank
-      integer :: comm_F,nproc_F,myrank_F
+      integer :: icomm_frag,isize_frag,id_frag
       integer :: npg,i,j,k,m,ierr
       
-      !dc%icomm_tot = nproc_group_global ! (already)
-      myrank = nproc_id_global
-      nproc = nproc_size_global
-      
       ! set dc%i_frag
-      npg = nproc / dc%n_frag
-      m = mod(nproc,dc%n_frag) ! nproc = npg*dc%n_frag + m
+      npg = dc%isize_tot / dc%n_frag
+      m = mod(dc%isize_tot,dc%n_frag) ! nproc = npg*dc%n_frag + m
       k=0
       do j=0,dc%n_frag-1
       do i=0,npg-1
-        if(j*npg+i==myrank) then
+        if(j*npg+i==dc%id_tot) then
           dc%i_frag=j
           k=1
           exit
@@ -125,25 +123,28 @@ contains
         end if
       end do
       end do
-      if(k==0) dc%i_frag = myrank-npg*dc%n_frag
+      if(k==0) dc%i_frag = dc%id_tot-npg*dc%n_frag
       dc%i_frag = dc%i_frag + 1 ! = 1:dc%n_frag
       
-      ! split communicator
-      call Mpi_Comm_split(dc%icomm_tot,dc%i_frag,myrank,comm_F,ierr) ! dc%i_frag : color, myrank : key
-      call MPi_Comm_SIZE(comm_F,nproc_F,ierr)
-      call mpi_comm_rank(comm_F,myrank_F,ierr)
+      ! split communicator !!!!! future work --> wrapper
+      call Mpi_Comm_split(dc%icomm_tot,dc%i_frag,dc%id_tot,icomm_frag,ierr) ! dc%i_frag : color, myrank : key
+      call MPi_Comm_SIZE(icomm_frag,isize_frag,ierr)
+      call mpi_comm_rank(icomm_frag,id_frag,ierr)
+      
+      dc%icomm_frag = icomm_frag
+      dc%id_frag = id_frag
+      dc%isize_frag = isize_frag
       
       ! Override global variables
-      nproc_group_global = comm_F
-      nproc_id_global = myrank_F
-      nproc_size_global = nproc_F
+      nproc_group_global = icomm_frag
+      nproc_id_global = id_frag
+      nproc_size_global = isize_frag
       
-write(*,*) "test_dcdft 1:",myrank_F,nproc_F,dc%i_frag,myrank,nproc  !!!!!!!!! test_dcdft
+write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_frag,isize_frag,dc%id_tot,dc%isize_tot  !!!!!!!!! test_dcdft
     
     end subroutine init_comm_frag
     
     subroutine init_fragment
-      use parallelization !!!!!!!!! test_dcdft
       use salmon_global, only: length_buffer, kion, rion, natom, num_rgrid, al
       implicit none
       integer :: i_frag,n,i,j,k,ii,jj,kk
@@ -267,7 +268,7 @@ write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
         end do
       end do
       
-if(nproc_id_global==0) write(*,*) "test_dcdft 2: i_frag, natom, nelec",dc%i_frag, natom, nelec  !!!!!!!!! test_dcdft
+      if(dc%id_frag==0) write(*,'(a,6i10)') "test_dcdft 2: i_frag, natom, nelec, ixyz_frag",dc%i_frag, natom, nelec, dc%ixyz_frag(1:3,dc%i_frag)  !!!!!!!!! test_dcdft
     
     end subroutine init_fragment
     
@@ -286,7 +287,7 @@ if(nproc_id_global==0) write(*,*) "test_dcdft 2: i_frag, natom, nelec",dc%i_frag
 
   end subroutine init_dcdft
   
-!
+!===================================================================================================================================
   
   ! rho_s (fragment) --> dc%rho_tot_s (total system) !!!!!! future work: occupancy, spsi
   subroutine calc_rho_total_dcdft(nspin,lg,mg,info,rho_s,dc)
@@ -342,6 +343,8 @@ if(nproc_id_global==0) write(*,*) "test_dcdft 2: i_frag, natom, nelec",dc%i_frag
     
   end subroutine calc_rho_total_dcdft
   
+!===================================================================================================================================
+  
   ! dc%vloc_tot (total system) --> v_local (fragment)
   subroutine calc_vlocal_fragment_dcdft(nspin,lg,mg,info,vloc,dc)
     use structures
@@ -381,6 +384,8 @@ if(nproc_id_global==0) write(*,*) "test_dcdft 2: i_frag, natom, nelec",dc%i_frag
     end do
     
   end subroutine calc_vlocal_fragment_dcdft
+  
+!===================================================================================================================================
   
   subroutine test_density(dc) !!!!!!! test_dcdft
     use structures
