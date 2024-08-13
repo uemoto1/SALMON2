@@ -146,7 +146,7 @@ write(*,*) "test_dcdft 1:",myrank_F,nproc_F,dc%i_frag,myrank,nproc  !!!!!!!!! te
       use parallelization !!!!!!!!! test_dcdft
       use salmon_global, only: length_buffer, kion, rion, natom, num_rgrid, al
       implicit none
-      integer :: i,j,k,n,i_frag
+      integer :: i_frag,n,i,j,k,ii,jj,kk
       integer :: iatom,iatom_frag,nxyz_buffer(3)
       integer :: kion_frag(natom,dc%n_frag),natom_frag(dc%n_frag)
       real(8) :: dr,bn,wrk
@@ -203,21 +203,26 @@ write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
       ! boundaries of the fragment i_frag
         r1 = dc%rxyz_frag(:,i_frag) - length_buffer
         r2 = dc%rxyz_frag(:,i_frag) + ldomain + length_buffer
-        do n=1,3 ! x,y,z
-          r1(n) = r_periodic(r1(n),al(n)) ! [0:al]
-          r2(n) = r_periodic(r2(n),al(n)) ! [0:al]
-        end do
       ! atom count
         iatom_frag = 0
         do iatom=1,natom
-          r(1:3) = rion(1:3,iatom) ! r = [0:al]
-          if(if_rin_periodic(r(1),r1(1),r2(1),al(1)) .and. &
-          &  if_rin_periodic(r(2),r1(2),r2(2),al(2)) .and. &
-          &  if_rin_periodic(r(3),r1(3),r2(3),al(3)) ) then
-            iatom_frag = iatom_frag + 1
-            rion_frag(1:3,iatom_frag,i_frag) = r(1:3) - dc%rxyz_frag(1:3,i_frag)
-            kion_frag(iatom_frag,i_frag) = kion(iatom)
-          end if
+          do ii=-1,1
+          do jj=-1,1
+          do kk=-1,1
+            r(1:3) = rion(1:3,iatom) ! r = [0:al]
+            r(1) = r(1) + dble(ii)*al(1)
+            r(2) = r(2) + dble(jj)*al(2)
+            r(3) = r(3) + dble(kk)*al(3)
+            if( r1(1) <= r(1) .and. r(1) < r2(1)  .and. &
+            &   r1(2) <= r(2) .and. r(2) < r2(2)  .and. &
+            &   r1(3) <= r(3) .and. r(3) < r2(3)  ) then
+              iatom_frag = iatom_frag + 1
+              rion_frag(1:3,iatom_frag,i_frag) = r(1:3) - dc%rxyz_frag(1:3,i_frag)
+              kion_frag(iatom_frag,i_frag) = kion(iatom)
+            end if
+          end do
+          end do
+          end do
         end do
         natom_frag(i_frag) = iatom_frag
         i_frag = i_frag + 1
@@ -240,6 +245,11 @@ write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
       allocate(rion(3,natom),kion(natom))
       rion(1:3,1:natom) = rion_frag(1:3,1:natom,dc%i_frag)
       kion(1:natom) = kion_frag(1:natom,dc%i_frag)
+      do i=1,natom
+        do n=1,3 ! x,y,z
+          rion(n,i) = r_periodic(rion(n,i),al(n))
+        end do
+      end do
       
     ! base_directory =  !!!!!!!!!! future work
       
@@ -272,27 +282,8 @@ if(nproc_id_global==0) write(*,*) "test_dcdft 2: i_frag, natom, nelec",dc%i_frag
       do while (r_periodic > a)
         r_periodic = r_periodic - a
       end do
-    end function
-    
-    function if_rin_periodic(r,r1,r2,a) ! r is in [r1,r2] or not. a: period.
-      implicit none
-      logical :: if_rin_periodic
-      real(8),intent(in) :: r,r1,r2,a ! r,r1,r2: in [0,a]
-      if(r  < 0d0 .or. a < r  .or. &
-      &  r1 < 0d0 .or. a < r1 .or. &
-      &  r2 < 0d0 .or. a < r2 ) stop "if_rin_periodic"
-      if_rin_periodic = .false.
-      if(r1 < r2) then
-        if(r1 <= r .and. r < r2) then
-          if_rin_periodic = .true.
-        end if
-      else
-        if(r1 <= r .or. r < r2) then
-          if_rin_periodic = .true.
-        end if
-      end if
-    end function
-    
+    end function r_periodic
+
   end subroutine init_dcdft
   
 !
