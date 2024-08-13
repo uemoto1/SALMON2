@@ -144,11 +144,11 @@ write(*,*) "test_dcdft 1:",myrank_F,nproc_F,dc%i_frag,myrank,nproc  !!!!!!!!! te
       use parallelization !!!!!!!!! test_dcdft
       use salmon_global, only: length_buffer, kion, rion, natom, num_rgrid, al
       implicit none
-      integer :: i,j,k,n
+      integer :: i,j,k,n,i_frag
       integer :: iatom,iatom_frag,nxyz_buffer(3)
       integer :: kion_frag(natom,dc%n_frag),natom_frag(dc%n_frag)
       real(8) :: dr,bn,wrk
-      real(8) :: r1(3),r2(3)
+      real(8) :: r1(3),r2(3),r(3)
       real(8) :: ldomain(3)
       real(8) :: rion_frag(3,natom,dc%n_frag)
     
@@ -158,13 +158,8 @@ write(*,*) "test_dcdft 1:",myrank_F,nproc_F,dc%i_frag,myrank,nproc  !!!!!!!!! te
       do n=1,3 ! x,y,z
       ! rion --> rion = [0:al] (total system)
         do i=1,natom
-          do while (rion(n,i) < 0)
-            rion(n,i) = rion(n,i) + al(n)
-          end do
-          do while (rion(n,i) > al(n))
-            rion(n,i) = rion(n,i) - al(n)
-          end do
-          if(rion(n,i) < 0 .or. rion(n,i) > al(n)) stop "DC method (yn_dc=y): rion"
+          rion(n,i) = r_periodic(rion(n,i),al(n))
+          if(rion(n,i) < 0d0 .or. rion(n,i) > al(n)) stop "DC method (yn_dc=y): rion"
         end do
       ! dc%nxyz_domain: # of grid points for each domain
         if(mod(num_rgrid(n),num_fragment(n))==0) then
@@ -178,46 +173,52 @@ write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
         else
           stop "DC method (yn_dc=y): mod(num_rgrid,num_fragment) /= 0"
         end if
-      end do
+      end do ! n=x,y,z
 
     ! position of each fragment
       allocate(dc%ixyz_frag(3,dc%n_frag),dc%rxyz_frag(3,dc%n_frag))
-      n = 1
+      i_frag = 1
       do i=1,num_fragment(1)
       do j=1,num_fragment(2)
       do k=1,num_fragment(3)
       ! ix_total = ix_fragment + dc%ixyz_frag(1,dc%i_frag), ix_fragment=[1:dc%nxyz_domain(1)], etc.
-        dc%ixyz_frag(1,n) = (i-1)*dc%nxyz_domain(1)
-        dc%ixyz_frag(2,n) = (j-1)*dc%nxyz_domain(2)
-        dc%ixyz_frag(3,n) = (k-1)*dc%nxyz_domain(3)
-        dc%rxyz_frag(1,n) = dble(i-1)*ldomain(1)
-        dc%rxyz_frag(2,n) = dble(j-1)*ldomain(2)
-        dc%rxyz_frag(3,n) = dble(k-1)*ldomain(3)
-        n = n + 1
+        dc%ixyz_frag(1,i_frag) = (i-1)*dc%nxyz_domain(1)
+        dc%ixyz_frag(2,i_frag) = (j-1)*dc%nxyz_domain(2)
+        dc%ixyz_frag(3,i_frag) = (k-1)*dc%nxyz_domain(3)
+        dc%rxyz_frag(1,i_frag) = dble(i-1)*ldomain(1)
+        dc%rxyz_frag(2,i_frag) = dble(j-1)*ldomain(2)
+        dc%rxyz_frag(3,i_frag) = dble(k-1)*ldomain(3)
+        i_frag = i_frag + 1
       end do
       end do
       end do
       
     ! variables for each fragment
-      n = 1
+      i_frag = 1
       do i=1,num_fragment(1)
       do j=1,num_fragment(2)
       do k=1,num_fragment(3)
-        r1 = dc%rxyz_frag(:,n) - length_buffer
-        r2 = r1 + ldomain + length_buffer
+      ! boundaries of the fragment i_frag
+        r1 = dc%rxyz_frag(:,i_frag) - length_buffer
+        r2 = dc%rxyz_frag(:,i_frag) + ldomain + length_buffer
+        do n=1,3 ! x,y,z
+          r1(n) = r_periodic(r1(n),al(n)) ! [0:al]
+          r2(n) = r_periodic(r2(n),al(n)) ! [0:al]
+        end do
       ! atom count
         iatom_frag = 0
         do iatom=1,natom
-          if(rion(1,iatom)>=r1(1) .and. rion(1,iatom)<r2(1) .and. &
-          &  rion(2,iatom)>=r1(2) .and. rion(2,iatom)<r2(2) .and. &
-          &  rion(3,iatom)>=r1(3) .and. rion(3,iatom)<r2(3) ) then
+          r(1:3) = rion(1:3,iatom) ! r = [0:al]
+          if(if_rin_periodic(r(1),r1(1),r2(1),al(1)) .and. &
+          &  if_rin_periodic(r(2),r1(2),r2(2),al(2)) .and. &
+          &  if_rin_periodic(r(3),r1(3),r2(3),al(3)) ) then
             iatom_frag = iatom_frag + 1
-            rion_frag(1:3,iatom_frag,n) = rion(1:3,iatom) - dc%rxyz_frag(1:3,n)
-            kion_frag(iatom_frag,n) = kion(iatom)
+            rion_frag(1:3,iatom_frag,i_frag) = r(1:3) - dc%rxyz_frag(1:3,i_frag)
+            kion_frag(iatom_frag,i_frag) = kion(iatom)
           end if
         end do
-        natom_frag(n) = iatom_frag
-        n = n + 1
+        natom_frag(i_frag) = iatom_frag
+        i_frag = i_frag + 1
       end do
       end do
       end do
@@ -258,7 +259,41 @@ if(nproc_id_global==0) write(*,*) "test_dcdft 2: i_frag, natom, nelec",dc%i_frag
     
     end subroutine init_fragment
     
+    function r_periodic(r,a) ! r --> r_periodic in [0,a]
+      implicit none
+      real(8) :: r_periodic
+      real(8),intent(in) :: r,a
+      r_periodic = r
+      do while (r_periodic < 0d0)
+        r_periodic = r_periodic + a
+      end do
+      do while (r_periodic > a)
+        r_periodic = r_periodic - a
+      end do
+    end function
+    
+    function if_rin_periodic(r,r1,r2,a) ! r is in [r1,r2] or not. a: period.
+      implicit none
+      logical :: if_rin_periodic
+      real(8),intent(in) :: r,r1,r2,a ! r,r1,r2: in [0,a]
+      if(r  < 0d0 .or. a < r  .or. &
+      &  r1 < 0d0 .or. a < r1 .or. &
+      &  r2 < 0d0 .or. a < r2 ) stop "if_rin_periodic"
+      if_rin_periodic = .false.
+      if(r1 < r2) then
+        if(r1 <= r .and. r < r2) then
+          if_rin_periodic = .true.
+        end if
+      else
+        if(r1 <= r .or. r < r2) then
+          if_rin_periodic = .true.
+        end if
+      end if
+    end function
+    
   end subroutine init_dcdft
+  
+!
   
   ! rho_s (fragment) --> dc%rho_tot_s (total system) !!!!!! future work: occupancy, spsi
   subroutine calc_rho_total_dcdft(nspin,lg,mg,info,rho_s,dc)
