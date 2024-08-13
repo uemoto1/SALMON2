@@ -131,17 +131,17 @@ contains
       call MPi_Comm_SIZE(comm_F,nproc_F,ierr)
       call mpi_comm_rank(comm_F,myrank_F,ierr)
       
-  !!!!!!!!! test
-  write(*,*) "dc test 1:",myrank_F,nproc_F,dc%i_frag,myrank,nproc
-      
       ! Override global variables
       nproc_group_global = comm_F
       nproc_id_global = myrank_F
       nproc_size_global = nproc_F
+      
+write(*,*) "test_dcdft 1:",myrank_F,nproc_F,dc%i_frag,myrank,nproc  !!!!!!!!! test_dcdft
     
     end subroutine init_comm_frag
     
     subroutine init_fragment
+      use parallelization !!!!!!!!! test_dcdft
       use salmon_global, only: length_buffer, kion, rion, natom, num_rgrid, al
       implicit none
       integer :: i,j,k,n
@@ -223,7 +223,7 @@ contains
     ! set variables for own fragment
     
     ! nelec (total system) --> nelec (fragment)
-      nelec = nelec * natom_frag(dc%i_frag) / natom !!!!!!!!! test !!!!!!!!
+      nelec = nelec * natom_frag(dc%i_frag) / natom !!!!!!!!! test_dcdft !!!!!!!!
     
     ! al, num_rgrid (total system) --> al, num_rgrid (fragment)
       al = ldomain + 2d0*length_buffer
@@ -251,6 +251,8 @@ contains
           dc%jxyz_tot(i,n) = j ! r-grid (total)
         end do
       end do
+      
+if(nproc_id_global==0) write(*,*) "test_dcdft 2: i_frag, natom, nelec",dc%i_frag, natom, nelec  !!!!!!!!! test_dcdft
     
     end subroutine init_fragment
     
@@ -350,41 +352,14 @@ contains
     
   end subroutine calc_vlocal_fragment_dcdft
   
-!!!!!!! test
-  subroutine test_density(dc,lg,system,info,rho_s)
+  subroutine test_density(dc) !!!!!!! test_dcdft
     use structures
     use communication, only: comm_summation
     use salmon_global, only: natom, kion, rion
     use writefield, only: write_dns
     implicit none
-    type(s_dcdft)                    :: dc
-    type(s_rgrid),        intent(in) :: lg
-    type(s_dft_system),   intent(in) :: system
-    type(s_parallel_info),intent(in) :: info
-    type(s_scalar),       intent(in) :: rho_s (system%nspin)
+    type(s_dcdft) :: dc
     !
-    integer :: ix,iy,iz,ix_tot,iy_tot,iz_tot
-    real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3)) :: wrk1,wrk2
-    
-    wrk1 = 0d0
-    if(info%id_rko==0) then
-      do iz=1,dc%nxyz_domain(3); iz_tot = dc%ixyz_frag(3,dc%i_frag) + iz
-      do iy=1,dc%nxyz_domain(2); iy_tot = dc%ixyz_frag(2,dc%i_frag) + iy
-      do ix=1,dc%nxyz_domain(1); ix_tot = dc%ixyz_frag(1,dc%i_frag) + ix
-        wrk1(ix_tot,iy_tot,iz_tot) = rho_s(1)%f(ix,iy,iz)
-      end do
-      end do
-      end do
-    end if
-    call comm_summation(wrk1,wrk2,dc%lg_tot%num(1)*dc%lg_tot%num(2)*dc%lg_tot%num(3),dc%icomm_tot)
-    do iz=dc%mg_tot%is(3),dc%mg_tot%ie(3)
-    do iy=dc%mg_tot%is(2),dc%mg_tot%ie(2)
-    do ix=dc%mg_tot%is(1),dc%mg_tot%ie(1)
-      dc%rho_tot_s(1)%f(ix,iy,iz) = wrk2(ix,iy,iz)
-    end do
-    end do
-    end do
-    
     natom = dc%system_tot%nion
     deallocate(kion,rion)
     allocate(kion(natom),rion(3,natom))

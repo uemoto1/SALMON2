@@ -323,6 +323,8 @@ call fipp_stop ! performance profiling
 !------------ Writing part -----------
 call timer_begin(LOG_WRITE_GS_RESULTS)
 
+call test_density(dc) !!!!!! test_dcdft
+
 ! write GS: basic data
 call write_band_information(system,energy)
 call write_eigen(ofl,system,energy)
