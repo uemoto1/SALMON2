@@ -50,12 +50,14 @@ contains
     nproc_ob = 1 ! override
     nproc_rgrid = nproc_rgrid_tot ! override
     nstate = nelec ! override !!!!!! future work: remove
+    yn_dc = 't' ! override !!!!!! future work: remove
     call init_total
     
   ! fragment
     nproc_ob = nproc_ob_tmp ! override
     nproc_rgrid = nproc_rgrid_tmp ! override
     nstate = dc%nstate_frag ! override !!!!!! future work: new input variable
+    yn_dc = 'y' ! override !!!!!! future work: remove
     call init_comm_frag
     call init_fragment
     
