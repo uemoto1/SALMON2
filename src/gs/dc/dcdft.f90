@@ -23,9 +23,9 @@ contains
     use salmon_global, only: num_fragment, base_directory, nproc_k, nproc_ob, nproc_rgrid, &
     & nproc_rgrid_tot, nelec, nstate, yn_dc
     implicit none
-    type(s_dcdft)   :: dc
-    type(s_pp_info) :: pp
-    type(s_mixing)  :: mixing
+    type(s_dcdft)  ,intent(inout) :: dc
+    type(s_pp_info),intent(inout) :: pp
+    type(s_mixing) ,intent(inout) :: mixing
     !
     integer :: nproc_ob_tmp, nproc_rgrid_tmp(3)
     
@@ -104,10 +104,10 @@ contains
   
     subroutine init_comm_frag
       use parallelization, only: nproc_group_global, nproc_id_global, nproc_size_global
-      use mpi !!!!! future work --> wrapper
+      use communication, only: comm_create_group,comm_get_groupinfo
       implicit none
       integer :: icomm_frag,isize_frag,id_frag
-      integer :: npg,i,j,k,m,ierr
+      integer :: npg,i,j,k,m
       
       ! set dc%i_frag
       npg = dc%isize_tot / dc%n_frag
@@ -126,10 +126,9 @@ contains
       if(k==0) dc%i_frag = dc%id_tot-npg*dc%n_frag
       dc%i_frag = dc%i_frag + 1 ! = 1:dc%n_frag
       
-      ! split communicator !!!!! future work --> wrapper
-      call Mpi_Comm_split(dc%icomm_tot,dc%i_frag,dc%id_tot,icomm_frag,ierr) ! dc%i_frag : color, myrank : key
-      call MPi_Comm_SIZE(icomm_frag,isize_frag,ierr)
-      call mpi_comm_rank(icomm_frag,id_frag,ierr)
+      ! split communicator
+      icomm_frag = comm_create_group(dc%icomm_tot,dc%i_frag,dc%id_tot) ! dc%i_frag : color, dc%id_tot : key
+      call comm_get_groupinfo(icomm_frag, id_frag, isize_frag)
       
       dc%icomm_frag = icomm_frag
       dc%id_frag = id_frag
