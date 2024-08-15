@@ -30,27 +30,27 @@ contains
 subroutine init_dir_out_restart(ofl)
   use structures,  only: s_ofile
   use filesystem,  only: atomic_create_directory
-  use salmon_global,   only: theory,write_rt_wfn_k
+  use salmon_global,   only: theory,write_rt_wfn_k,base_directory
   use parallelization, only: nproc_id_global,nproc_group_global
   implicit none
   type(s_ofile), intent(inout) :: ofl
 
   select case(theory)
     case('dft','dft_md','dft_band')
-      ofl%dir_out_restart = 'data_for_restart/'
+      ofl%dir_out_restart = trim(base_directory)//'data_for_restart/'
       call atomic_create_directory(ofl%dir_out_restart,nproc_group_global,nproc_id_global)
     case('tddft_response','tddft_pulse','single_scale_maxwell_tddft')
       if (write_rt_wfn_k == 'y') then
-        ofl%dir_out_restart = 'data_for_restart_rt/'
+        ofl%dir_out_restart = trim(base_directory)//'data_for_restart_rt/'
         call atomic_create_directory(ofl%dir_out_restart,nproc_group_global,nproc_id_global)
       end if
     case('multi_scale_maxwell_tddft')
       if (write_rt_wfn_k == 'y') then
-        ofl%dir_out_restart = 'data_for_restart_ms'
+        ofl%dir_out_restart = trim(base_directory)//'data_for_restart_ms'
         call atomic_create_directory(ofl%dir_out_restart,nproc_group_global,nproc_id_global)
       end if
     case('dft2tddft')
-      ofl%dir_out_restart = 'data_for_restart_rt/'
+      ofl%dir_out_restart = trim(base_directory)//'data_for_restart_rt/'
       call atomic_create_directory(ofl%dir_out_restart,nproc_group_global,nproc_id_global)
   end select
 
@@ -59,6 +59,7 @@ end subroutine init_dir_out_restart
 
 subroutine generate_checkpoint_directory_name(header,iter,gdir,pdir)
   use parallelization, only: nproc_id_global
+  use salmon_global,   only: base_directory
   implicit none
   character(*),  intent(in)  :: header
   integer,       intent(in)  :: iter
@@ -66,7 +67,7 @@ subroutine generate_checkpoint_directory_name(header,iter,gdir,pdir)
   character(256),intent(out) :: pdir
 
   ! global directory
-  write(gdir,'(A,A,A,I6.6,A)') "checkpoint_",trim(header),"_",iter,"/"
+  write(gdir,'(A,A,A,I6.6,A)') trim(base_directory)//"checkpoint_",trim(header),"_",iter,"/"
   ! process private directory
   write(pdir,'(A,A,I6.6,A)')   trim(gdir),'rank_',nproc_id_global,'/'
 end subroutine generate_checkpoint_directory_name
