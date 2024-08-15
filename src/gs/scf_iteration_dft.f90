@@ -195,7 +195,7 @@ DFT_Iteration : do iter=Miter+1,nscf
      & dc%Vpsl_tot,dc%Vh_tot,dc%Vxc_tot,dc%vloc_tot, &
      mixing,energy)
      ! dc%vloc_tot (total system) --> v_local (fragment)
-     call calc_vlocal_fragment_dcdft(system%nspin,lg,mg,info,v_local,dc)
+     call calc_vlocal_fragment_dcdft(system%nspin,mg,v_local,dc)
    end if
    call timer_begin(LOG_CALC_TOTAL_ENERGY)
    if( PLUS_U_ON )then

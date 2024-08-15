@@ -347,13 +347,12 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
 !===================================================================================================================================
   
   ! dc%vloc_tot (total system) --> v_local (fragment)
-  subroutine calc_vlocal_fragment_dcdft(nspin,lg,mg,info,vloc,dc)
+  subroutine calc_vlocal_fragment_dcdft(nspin,mg,vloc,dc)
     use structures
     use communication, only: comm_summation
     implicit none
     integer,              intent(in) :: nspin
-    type(s_rgrid),        intent(in) :: lg,mg
-    type(s_parallel_info),intent(in) :: info
+    type(s_rgrid),        intent(in) :: mg
     type(s_scalar)                   :: vloc(nspin)
     type(s_dcdft)                    :: dc
     !
@@ -388,21 +387,33 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
   
 !===================================================================================================================================
   
-  subroutine test_density(dc) !!!!!!! test_dcdft
+  subroutine test_density(system,dc) !!!!!!! test_dcdft
     use structures
     use communication, only: comm_summation
-    use salmon_global, only: natom, kion, rion
+    use salmon_global, only: natom, kion, rion, base_directory
     use writefield, only: write_dns
     implicit none
     type(s_dcdft) :: dc
+    type(s_dft_system),intent(in) :: system
+    !
+    character(256) :: dir_tmp
     !
     natom = dc%system_tot%nion
     deallocate(kion,rion)
     allocate(kion(natom),rion(3,natom))
     kion = dc%system_tot%kion
     rion = dc%system_tot%rion
+    dir_tmp = base_directory
+    base_directory = dc%base_directory
     call write_dns(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%rho_tot_s)
-  
+    
+    natom = system%nion
+    deallocate(kion,rion)
+    allocate(kion(natom),rion(3,natom))
+    kion = system%kion
+    rion = system%rion
+    base_directory = dir_tmp
+    
   end subroutine test_density
   
 
