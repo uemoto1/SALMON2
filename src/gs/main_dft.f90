@@ -87,7 +87,7 @@ integer :: ilevel_print
 if(theory=='dft_band'.and.iperiodic/=3) return
 
 if(yn_dc=='y') then
-  call init_dcdft(dc,mixing)
+  call init_dcdft(dc,pp,mixing)
   ilevel_print = 2
 else
   ilevel_print = 3

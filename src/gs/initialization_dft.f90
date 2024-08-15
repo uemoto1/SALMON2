@@ -91,7 +91,7 @@ do jspin=1,system%nspin
   call allocate_scalar(mg,Vxc(jspin))
 end do
 if(yn_jm=='n') then
-  call read_pslfile(system,pp)
+  if(yn_dc=='n') call read_pslfile(system,pp)
   call init_ps(lg,mg,system,info,fg,poisson,pp,ppg,Vpsl)
   call calc_nlcc(pp, system, mg, ppn)  !setup NLCC term from pseudopotential
   if ((.not. quiet) .and. comm_is_root(nproc_id_global)) then

@@ -472,6 +472,7 @@ module structures
   ! summation
     integer :: n_frag ! # of fragments (subsystems)
     integer :: nxyz_domain(3) ! # of r-grid points for each core domain
+    integer :: nxyz_buffer(3) ! # of r-grid points for the buffer region
     integer,allocatable :: ixyz_frag(:,:) ! r-grid index of the fragment origin
     real(8),allocatable :: rxyz_frag(:,:) ! position of the fragment origin
   ! total system

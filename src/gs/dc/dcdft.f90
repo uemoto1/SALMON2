@@ -18,13 +18,14 @@ module dcdft
   implicit none
 contains
 
-  subroutine init_dcdft(dc,mixing)
+  subroutine init_dcdft(dc,pp,mixing)
     use structures
     use salmon_global, only: num_fragment, base_directory, nproc_k, nproc_ob, nproc_rgrid, &
     & nproc_rgrid_tot, nelec, nstate, yn_dc
     implicit none
-    type(s_dcdft) ,intent(inout) :: dc
-    type(s_mixing),intent(inout) :: mixing
+    type(s_dcdft)   :: dc
+    type(s_pp_info) :: pp
+    type(s_mixing)  :: mixing
     !
     integer :: nproc_ob_tmp, nproc_rgrid_tmp(3)
     
@@ -66,7 +67,6 @@ contains
       use prep_pp_sub, only: init_ps
       implicit none
       integer :: i
-      type(s_pp_info) :: pp_tmp
       type(s_pp_grid) :: ppg_tmp
       type(s_stencil) :: stencil_dummy
       type(s_sendrecv_grid):: srg_dummy
@@ -96,9 +96,9 @@ contains
       call init_mixing(dc%system_tot%nspin,dc%mg_tot,mixing)
       
     ! Vpsl
-      call read_pslfile(dc%system_tot,pp_tmp)
+      call read_pslfile(dc%system_tot,pp)
       call init_ps(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%fg_tot,dc%poisson_tot, &
-      & pp_tmp,ppg_tmp,dc%vpsl_tot)
+      & pp,ppg_tmp,dc%vpsl_tot)
     
     end subroutine init_total
   
@@ -148,7 +148,7 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
       use salmon_global, only: length_buffer, kion, rion, natom, num_rgrid, al
       implicit none
       integer :: i_frag,n,i,j,k,ii,jj,kk
-      integer :: iatom,iatom_frag,nxyz_buffer(3)
+      integer :: iatom,iatom_frag
       integer :: kion_frag(natom,dc%n_frag),natom_frag(dc%n_frag)
       real(8) :: dr,bn,wrk
       real(8) :: r1(3),r2(3),r(3)
@@ -165,14 +165,14 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
           if(rion(n,i) < 0d0 .or. rion(n,i) > al(n)) stop "DC method (yn_dc=y): rion"
         end do
       ! dc%nxyz_domain: # of grid points for each domain
+      ! dc%nxyz_buffer: # of grid points for the buffer region
         if(mod(num_rgrid(n),num_fragment(n))==0) then
           dc%nxyz_domain(n) = num_rgrid(n) / num_fragment(n)
           dr = al(n)/dble(num_rgrid(n))
           bn = length_buffer(n)/dr
           wrk = abs(bn-dble(nint(bn)))
-write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
           if(wrk > 1d-15) stop "DC method (yn_dc=y): grid mismatch of length_buffer"
-          nxyz_buffer(n) = nint(bn)
+          dc%nxyz_buffer(n) = nint(bn)
         else
           stop "DC method (yn_dc=y): mod(num_rgrid,num_fragment) /= 0"
         end if
@@ -238,7 +238,7 @@ write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
     
     ! al, num_rgrid (total system) --> al, num_rgrid (fragment)
       al = ldomain + 2d0*length_buffer
-      num_rgrid = dc%nxyz_domain + 2*nxyz_buffer
+      num_rgrid = dc%nxyz_domain + 2*dc%nxyz_buffer
       
     ! natom, rion, kion (total system) --> natom, rion, kion (fragment)
       natom = natom_frag(dc%i_frag)
@@ -258,7 +258,7 @@ write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
       allocate(dc%jxyz_tot(maxval(num_rgrid),3))
       do n=1,3 ! x,y,z
         do i=1,num_rgrid(n) ! r-grid (fragment)
-          if(i <= dc%nxyz_domain(n) + nxyz_buffer(n)) then
+          if(i <= dc%nxyz_domain(n) + dc%nxyz_buffer(n)) then
             j = i + dc%ixyz_frag(n,dc%i_frag)
           else
             j = ( i - num_rgrid(n) ) + dc%ixyz_frag(n,dc%i_frag) ! minus region
@@ -301,8 +301,8 @@ write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
     type(s_dcdft)                    :: dc
     !
     integer :: ix,iy,iz,ispin,ix_tot,iy_tot,iz_tot
-    real(8),dimension(lg%is(1):lg%ie(1),lg%is(2):lg%ie(2),lg%is(3):lg%ie(3),1:nspin) :: frg_tmp,frg
-    real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3),1:nspin) :: tot_tmp,tot
+    real(8),dimension(lg%num(1),lg%num(2),lg%num(3),nspin) :: frg_tmp,frg
+    real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3),nspin) :: tot_tmp,tot
     
     ! rho_s (fragment)
     frg_tmp = 0d0
@@ -321,9 +321,9 @@ write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
     tot_tmp = 0d0
     if(info%id_rko==0) then
       do ispin=1,nspin
-      do iz=1,dc%nxyz_domain(3); iz_tot = dc%ixyz_frag(3,dc%i_frag) + iz
-      do iy=1,dc%nxyz_domain(2); iy_tot = dc%ixyz_frag(2,dc%i_frag) + iy
-      do ix=1,dc%nxyz_domain(1); ix_tot = dc%ixyz_frag(1,dc%i_frag) + ix
+      do iz=1,dc%nxyz_domain(3); iz_tot = dc%jxyz_tot(iz,3)
+      do iy=1,dc%nxyz_domain(2); iy_tot = dc%jxyz_tot(iy,2)
+      do ix=1,dc%nxyz_domain(1); ix_tot = dc%jxyz_tot(ix,1)
         tot_tmp(ix_tot,iy_tot,iz_tot,ispin) = frg(ix,iy,iz,ispin)
       end do
       end do
@@ -357,7 +357,7 @@ write(*,*) "test_dcdft 3: buffer grid", dr, bn, wrk !!!!!!!!! test_dcdft
     type(s_dcdft)                    :: dc
     !
     integer :: ix,iy,iz,ispin,ix_tot,iy_tot,iz_tot
-    real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3),1:nspin) :: tot_tmp,tot
+    real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3),nspin) :: tot_tmp,tot
     
     ! vloc (total)
     tot_tmp = 0d0
