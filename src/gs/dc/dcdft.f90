@@ -69,7 +69,7 @@ contains
       integer :: i
       type(s_pp_grid) :: ppg_tmp
       type(s_stencil) :: stencil_dummy
-      type(s_sendrecv_grid):: srg_dummy
+      type(s_sendrecv_grid) :: srg_dummy
       type(s_ofile) :: ofile_dummy
       
       dc%icomm_tot = nproc_group_global
@@ -105,6 +105,7 @@ contains
     subroutine init_comm_frag
       use parallelization, only: nproc_group_global, nproc_id_global, nproc_size_global
       use communication, only: comm_create_group,comm_get_groupinfo
+      use filesystem, only: atomic_create_directory
       implicit none
       integer :: icomm_frag,isize_frag,id_frag
       integer :: npg,i,j,k,m
@@ -138,9 +139,12 @@ contains
       nproc_group_global = icomm_frag
       nproc_id_global = id_frag
       nproc_size_global = isize_frag
+      write(base_directory, '(a, a, i6.6, a)') trim(dc%base_directory), 'fragments/', dc%i_frag, '/'
+      
+      call atomic_create_directory(base_directory,icomm_frag,id_frag)
       
 write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_frag,isize_frag,dc%id_tot,dc%isize_tot  !!!!!!!!! test_dcdft
-    
+      
     end subroutine init_comm_frag
     
     subroutine init_fragment
@@ -250,8 +254,6 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
           rion(n,i) = r_periodic(rion(n,i),al(n))
         end do
       end do
-      
-    ! base_directory =  !!!!!!!!!! future work
       
     ! dc%jxyz_tot: r-grid (fragment) --> r-grid (total)
       allocate(dc%jxyz_tot(maxval(num_rgrid),3))
