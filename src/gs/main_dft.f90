@@ -323,7 +323,7 @@ call fipp_stop ! performance profiling
 !------------ Writing part -----------
 call timer_begin(LOG_WRITE_GS_RESULTS)
 
-call test_density(system,dc) !!!!!! test_dcdft
+if(yn_dc=='y') call write_total_dcdft(system,dc)
 
 ! write GS: basic data
 call write_band_information(system,energy)

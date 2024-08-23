@@ -20,8 +20,7 @@ contains
 
   subroutine init_dcdft(dc,pp,mixing)
     use structures
-    use salmon_global, only: num_fragment, base_directory, nproc_k, nproc_ob, nproc_rgrid, &
-    & nproc_rgrid_tot, nelec, nstate, yn_dc
+    use salmon_global, only: nproc_k, nproc_ob, nproc_rgrid, nproc_rgrid_tot, nstate, nelec, yn_dc
     implicit none
     type(s_dcdft)  ,intent(inout) :: dc
     type(s_pp_info),intent(inout) :: pp
@@ -29,17 +28,10 @@ contains
     !
     integer :: nproc_ob_tmp, nproc_rgrid_tmp(3)
     
-    dc%n_frag = num_fragment(1)*num_fragment(2)*num_fragment(3)
-    dc%elec_num_tot = dble(nelec)
-    dc%base_directory = trim(base_directory)
-    
-    dc%nstate_frag = nstate ! nstate for the fragment !!!!!! future work: new input variable
-    
-    if(nproc_k/=1) then
-      stop "DC method (yn_dc=y): nproc_k must be 1 for both the total system and fragments."
-    end if
+    if(nproc_k/=1) stop "DC method (yn_dc=y): nproc_k must be 1 for both the total system and fragments."
     nproc_ob_tmp = nproc_ob
     nproc_rgrid_tmp = nproc_rgrid
+    dc%nstate_frag = nstate ! nstate for the fragment !!!!!! future work: new input variable
     
   ! total system
     nproc_ob = 1 ! override
@@ -65,6 +57,8 @@ contains
       use mixing_sub, only: init_mixing
       use salmon_pp, only: read_pslfile
       use prep_pp_sub, only: init_ps
+      use salmon_global, only: num_fragment, nelec, base_directory
+      use filesystem, only: atomic_create_directory
       implicit none
       integer :: i
       type(s_pp_grid) :: ppg_tmp
@@ -72,10 +66,21 @@ contains
       type(s_sendrecv_grid) :: srg_dummy
       type(s_ofile) :: ofile_dummy
       
+    ! MPI for the total system
       dc%icomm_tot = nproc_group_global
       dc%id_tot = nproc_id_global
       dc%isize_tot = nproc_size_global
       
+    ! base_directory for the total system
+      if(base_directory /= './') stop "DC method (yn_dc=y): base_directory must be default."
+      dc%base_directory = './data_dcdft/total/'
+      call atomic_create_directory(dc%base_directory,dc%icomm_tot,dc%id_tot)
+      base_directory = dc%base_directory ! override
+    
+      dc%n_frag = num_fragment(1)*num_fragment(2)*num_fragment(3) ! # of the fragments
+      dc%elec_num_tot = dble(nelec) ! # of total electrons
+     
+    ! initialization for the total system
       call init_dft(dc%icomm_tot,dc%info_tot,dc%lg_tot,dc%mg_tot,dc%system_tot, &
       & stencil_dummy,dc%fg_tot,dc%poisson_tot,srg_dummy,dc%srg_scalar_tot,ofile_dummy)
       deallocate(dc%system_tot%rocc)
@@ -106,11 +111,12 @@ contains
       use parallelization, only: nproc_group_global, nproc_id_global, nproc_size_global
       use communication, only: comm_create_group,comm_get_groupinfo
       use filesystem, only: atomic_create_directory
+      use salmon_global, only: base_directory
       implicit none
       integer :: icomm_frag,isize_frag,id_frag
       integer :: npg,i,j,k,m
       
-      ! set dc%i_frag
+    ! set dc%i_frag (fragment index)
       npg = dc%isize_tot / dc%n_frag
       m = mod(dc%isize_tot,dc%n_frag) ! nproc = npg*dc%n_frag + m
       k=0
@@ -127,20 +133,22 @@ contains
       if(k==0) dc%i_frag = dc%id_tot-npg*dc%n_frag
       dc%i_frag = dc%i_frag + 1 ! = 1:dc%n_frag
       
-      ! split communicator
+    ! split communicator
       icomm_frag = comm_create_group(dc%icomm_tot,dc%i_frag,dc%id_tot) ! dc%i_frag : color, dc%id_tot : key
       call comm_get_groupinfo(icomm_frag, id_frag, isize_frag)
       
+    ! MPI for the fragment
       dc%icomm_frag = icomm_frag
       dc%id_frag = id_frag
       dc%isize_frag = isize_frag
       
-      ! Override global variables
+    ! Override global variables
       nproc_group_global = icomm_frag
       nproc_id_global = id_frag
       nproc_size_global = isize_frag
-      write(base_directory, '(a, a, i6.6, a)') trim(dc%base_directory), 'fragments/', dc%i_frag, '/'
+      write(base_directory, '(a, i6.6, a)') './data_dcdft/fragments/', dc%i_frag, '/'
       
+    ! base_directory for the fragment
       call atomic_create_directory(base_directory,icomm_frag,id_frag)
       
 write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_frag,isize_frag,dc%id_tot,dc%isize_tot  !!!!!!!!! test_dcdft
@@ -148,7 +156,7 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     end subroutine init_comm_frag
     
     subroutine init_fragment
-      use salmon_global, only: length_buffer, kion, rion, natom, num_rgrid, al
+      use salmon_global, only: length_buffer, kion, rion, natom, num_rgrid, al, num_fragment
       implicit none
       integer :: i_frag,n,i,j,k,ii,jj,kk
       integer :: iatom,iatom_frag
@@ -305,7 +313,7 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     real(8),dimension(lg%num(1),lg%num(2),lg%num(3),nspin) :: frg_tmp,frg
     real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3),nspin) :: tot_tmp,tot
     
-    ! rho_s (fragment)
+  ! rho_s (fragment)
     frg_tmp = 0d0
     do ispin=1,nspin
     do iz=mg%is(3),mg%ie(3)
@@ -318,7 +326,7 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     end do
     call comm_summation(frg_tmp,frg,lg%num(1)*lg%num(2)*lg%num(3)*nspin,info%icomm_r)
     
-    ! rho_s (total)
+  ! rho_s (total)
     tot_tmp = 0d0
     if(info%id_rko==0) then
       do ispin=1,nspin
@@ -351,15 +359,15 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     use structures
     use communication, only: comm_summation
     implicit none
-    integer,              intent(in) :: nspin
-    type(s_rgrid),        intent(in) :: mg
-    type(s_scalar)                   :: vloc(nspin)
-    type(s_dcdft)                    :: dc
+    integer,      intent(in) :: nspin
+    type(s_rgrid),intent(in) :: mg
+    type(s_scalar)           :: vloc(nspin)
+    type(s_dcdft)            :: dc
     !
     integer :: ix,iy,iz,ispin,ix_tot,iy_tot,iz_tot
     real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3),nspin) :: tot_tmp,tot
     
-    ! vloc (total)
+  ! vloc (total)
     tot_tmp = 0d0
     do ispin=1,nspin
     do iz=dc%mg_tot%is(3),dc%mg_tot%ie(3)
@@ -372,7 +380,7 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     end do
     call comm_summation(tot_tmp,tot,dc%lg_tot%num(1)*dc%lg_tot%num(2)*dc%lg_tot%num(3)*nspin,dc%icomm_tot)
     
-    ! vloc (fragment)
+  ! vloc (fragment)
     do ispin=1,nspin
     do iz=mg%is(3),mg%ie(3) ; iz_tot = dc%jxyz_tot(iz,3)
     do iy=mg%is(2),mg%ie(2) ; iy_tot = dc%jxyz_tot(iy,2)
@@ -387,17 +395,18 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
   
 !===================================================================================================================================
   
-  subroutine test_density(system,dc) !!!!!!! test_dcdft
+  subroutine write_total_dcdft(system,dc)
     use structures
     use communication, only: comm_summation
-    use salmon_global, only: natom, kion, rion, base_directory
+    use salmon_global, only: natom, kion, rion, base_directory, yn_out_dns
     use writefield, only: write_dns
     implicit none
     type(s_dcdft) :: dc
     type(s_dft_system),intent(in) :: system
     !
     character(256) :: dir_tmp
-    !
+    
+  ! override (fragment --> total)
     natom = dc%system_tot%nion
     deallocate(kion,rion)
     allocate(kion(natom),rion(3,natom))
@@ -405,8 +414,10 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     rion = dc%system_tot%rion
     dir_tmp = base_directory
     base_directory = dc%base_directory
-    call write_dns(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%rho_tot_s)
     
+    if(yn_out_dns =='y') call write_dns(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%rho_tot_s)
+    
+  ! override (total --> fragment)
     natom = system%nion
     deallocate(kion,rion)
     allocate(kion(natom),rion(3,natom))
@@ -414,8 +425,6 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     rion = system%rion
     base_directory = dir_tmp
     
-  end subroutine test_density
+  end subroutine write_total_dcdft
   
-
-
 end module dcdft

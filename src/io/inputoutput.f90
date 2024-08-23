@@ -2879,6 +2879,8 @@ contains
       if(yn_restart=='y') stop "DC method (yn_dc=y): yn_restart=y is not supported."
       if(nscf_init_mix_zero.gt.1) stop "DC method (yn_dc=y): nscf_init_mix_zero is not supported."
       if(yn_jm=='y') stop "DC method (yn_dc=y): yn_jm=y is not supported."
+      if(base_directory /= './') stop "DC method (yn_dc=y): base_directory must be default."
+      if(nproc_k/=1) stop "DC method (yn_dc=y): nproc_k must be 1 for both the total system and fragments."
       !!!!! if(write_gs_restart_data/='wfn') stop ! future work
     end if
 
