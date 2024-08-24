@@ -349,6 +349,8 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     end do
     end do
     end do
+
+if(dc%id_tot==0) write(*,*) "test_dcdft rho",sum(tot)*dc%system_tot%hvol,dc%elec_num_tot !!!!!!!!! test_dcdft
     
   end subroutine calc_rho_total_dcdft
   

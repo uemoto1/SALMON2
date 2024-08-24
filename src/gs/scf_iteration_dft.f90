@@ -191,6 +191,7 @@ DFT_Iteration : do iter=Miter+1,nscf
      call timer_end(LOG_CALC_RHO)
      ! rho_s (fragment) --> dc%rho_tot_s (total system)
      call calc_rho_total_dcdft(system%nspin,lg,mg,info,rho_s,dc)
+     ! mixing & local KS potential (total system)
      call update_density_and_potential(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot, &
      & stencil,xc_func,ppn,iter, &
      & spsi,srg,srg_scalar, & ! dummy

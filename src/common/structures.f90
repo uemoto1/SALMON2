@@ -471,7 +471,7 @@ module structures
   type s_dcdft
   ! summation
     integer :: n_frag ! # of fragments (subsystems)
-    integer :: nxyz_domain(3) ! # of r-grid points for each core domain
+    integer :: nxyz_domain(3) ! # of r-grid points for the core domain
     integer :: nxyz_buffer(3) ! # of r-grid points for the buffer region
     integer,allocatable :: ixyz_frag(:,:) ! r-grid index of the fragment origin
     real(8),allocatable :: rxyz_frag(:,:) ! position of the fragment origin
@@ -490,11 +490,8 @@ module structures
   ! own fragment
     integer :: i_frag       ! fragment index
     integer :: icomm_frag, id_frag, isize_frag ! MPI communicator, process ID, & # of processes
-    integer :: num_kos_frag ! (# of k-points) x (# of orbitals) x (# of spin states) for the fragment
     integer :: nstate_frag  ! nstate for the fragment
     integer,allocatable :: jxyz_tot(:,:)  ! r-grid (fragment) --> r-grid (total)
-    real(8),allocatable :: esp_frag(:) ! (1:num_kos_frag), eigenenergies of the fragment
-    real(8),allocatable :: rne_frag(:) ! (1:num_kos_frag), \int_{domain} d^3r | \psi(r) |^2
   end type s_dcdft
 
 ! +----------------------------------+
