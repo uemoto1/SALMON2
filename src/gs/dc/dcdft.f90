@@ -268,9 +268,9 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
       do n=1,3 ! x,y,z
         do i=1,num_rgrid(n) ! r-grid (fragment)
           if(i <= dc%nxyz_domain(n) + dc%nxyz_buffer(n)) then
-            j = i + dc%ixyz_frag(n,dc%i_frag)
+            j = dc%ixyz_frag(n,dc%i_frag) + i
           else
-            j = ( i - num_rgrid(n) ) + dc%ixyz_frag(n,dc%i_frag) ! minus region
+            j = dc%ixyz_frag(n,dc%i_frag) + ( i - num_rgrid(n) ) ! minus region
           end if
           j = mod(j+dc%lg_tot%num(n)-1,dc%lg_tot%num(n))+1
           dc%jxyz_tot(i,n) = j ! r-grid (total)
@@ -298,7 +298,7 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
   
 !===================================================================================================================================
   
-  ! rho_s (fragment) --> dc%rho_tot_s (total system) !!!!!! future work: occupancy, spsi
+  ! rho_s (fragment) --> dc%rho_tot_s (total system)
   subroutine calc_rho_total_dcdft(nspin,lg,mg,info,rho_s,dc)
     use structures
     use communication, only: comm_summation
@@ -392,6 +392,184 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     end do
     
   end subroutine calc_vlocal_fragment_dcdft
+  
+!===================================================================================================================================
+
+! cf. src/gs/occupation.f90
+  SUBROUTINE ne2mu_dcdft(mg,info,energy,spsi,dc,system)
+    use structures
+    use communication, only: comm_summation
+    implicit none
+    type(s_rgrid),        intent(in) :: mg
+    type(s_parallel_info),intent(in) :: info
+    type(s_dft_energy),   intent(in) :: energy
+    type(s_orbital),      intent(in) :: spsi
+    type(s_dcdft),        intent(in) :: dc
+    type(s_dft_system)               :: system
+    !
+    real(8) :: wspin,emax,emin
+    real(8) :: ne_each(system%no,system%nspin)
+    real(8),dimension(system%no,system%nspin,dc%n_frag) :: rocc,esp,ne_frag_orb,wrk1,wrk2
+
+    if(system%nspin==1) then
+      wspin = 2d0
+    else if(system%nspin==2) then
+      wspin = 1d0
+    end if
+    
+    call calc_ne_each
+    wrk1 = 0d0
+    wrk2 = 0d0
+    if(info%id_rko==0) then
+      wrk1(1:system%no,1:system%nspin,dc%i_frag) = energy%esp(1:system%no,1,1:system%nspin)
+      wrk2(1:system%no,1:system%nspin,dc%i_frag) = ne_each(1:system%no,1:system%nspin)
+    end if
+    call comm_summation(wrk1,esp,        system%no*system%nspin*dc%n_frag,dc%icomm_tot)
+    call comm_summation(wrk2,ne_frag_orb,system%no*system%nspin*dc%n_frag,dc%icomm_tot)
+
+    emin = minval(esp)
+    emax = maxval(esp)
+    call ne2mu_core(dc%elec_num_tot,emax,emin,system%mu)
+
+    system%rocc(1:system%no,1,1:system%nspin) = rocc(1:system%no,1:system%nspin,dc%i_frag)
+
+    return
+    
+  contains
+  
+    subroutine calc_ne_each
+      implicit none
+      integer :: io,ispin,ix,iy,iz
+      real(8) :: wrk(system%no,system%nspin)
+      
+      wrk = 0d0
+      do ispin=1,system%nspin
+      do io=info%io_s,info%io_e
+        do iz=mg%is(3),min(mg%ie(3),dc%nxyz_domain(3)) ! core region only
+        do iy=mg%is(2),min(mg%ie(2),dc%nxyz_domain(2)) ! core region only
+        do ix=mg%is(1),min(mg%ie(1),dc%nxyz_domain(1)) ! core region only
+          wrk(io,ispin) = wrk(io,ispin) + (abs(spsi%rwf(ix,iy,iz,ispin,io,1,1))**2) * system%hvol
+        end do
+        end do
+        end do
+      end do
+      end do
+      call comm_summation(wrk,ne_each,system%no*system%nspin,info%icomm_rko)
+      
+    end subroutine calc_ne_each
+
+    SUBROUTINE mu2ne(muin,neout)
+      use salmon_global, only: temperature, yn_spinorbit
+      implicit none
+      real(8), intent(in)  :: muin
+      real(8), intent(out) :: neout
+      !
+      integer :: i_frag,ispin,io
+      real(8) :: fact
+      
+      neout=0d0
+
+      if(temperature==0d0) then
+        do i_frag=1,dc%n_frag
+        do ispin=1,system%nspin
+        do io=1,system%no
+           fact = esp(io,ispin,i_frag) - muin
+           if(fact > 0d0) then
+              rocc(io,ispin,i_frag) = 0d0
+           else
+              rocc(io,ispin,i_frag) = wspin
+           endif
+           neout = neout + rocc(io,ispin,i_frag) * ne_frag_orb(io,ispin,i_frag)
+        end do
+        end do
+        end do
+      else
+        do i_frag=1,dc%n_frag
+        do ispin=1,system%nspin
+        do io=1,system%no
+           fact = (esp(io,ispin,i_frag)-muin)/temperature
+           if(fact.ge.40.d0) then
+              rocc(io,ispin,i_frag) = 0d0
+           else
+              rocc(io,ispin,i_frag) = wspin/( 1d0 + exp( fact ) )
+           endif
+           neout = neout + rocc(io,ispin,i_frag) * ne_frag_orb(io,ispin,i_frag)
+        end do
+        end do
+        end do
+      end if
+      
+      if(yn_spinorbit=='y') then
+        neout = neout*0.5d0 !!! For the SO mode, jspin=2 components are duplicate copy of jspin=1.
+      end if
+
+    END SUBROUTINE mu2ne
+    
+    subroutine ne2mu_core(nein,emax,emin,muout)
+      implicit none
+      real(8),intent(in)  :: nein,emax,emin
+      real(8),intent(out) :: muout
+      !
+      integer :: iter,ii,p5,p1,p2,nc
+      real(8) :: mu1,mu2,mu3,ne1,ne3,ne3o,diff_ne,diff_mu,muo,diff_ne2,wspin
+      
+      mu1 = emin
+      mu2 = emax
+      nc=0
+
+      ITERATION: do iter=1,100000
+        diff_ne = 100.d0
+        diff_ne2 = 100.d0
+
+        ne1  = 0d0
+        ne3  = 0d0
+        ne3o = 0d0
+
+        diff_mu =100.d0
+        muo=0.0d0
+
+        call mu2ne(mu1,ne1)
+
+        do ii=1,1000
+          if ( ii .eq. 1000 ) then
+            if ( nc .le. 50)  then
+               nc= nc + 1
+               mu1 = emin - 0.2d0*dble(nc)
+               mu2 = emax + 0.2d0*dble(nc)
+               cycle ITERATION
+            else
+               print *,'=================================='
+               print *,'Const Ne does not converged!!!!!!!'
+               print *,'=================================='
+               exit ITERATION
+            endif
+          endif
+          if ( diff_ne < 1d-10  .and. diff_mu < 1d-9  &
+             .and. diff_ne2 < 1.d-9 ) exit ITERATION
+          mu3 = mu1 + (mu2-mu1)/2.d0
+          ne3=0
+          call mu2ne(mu3,ne3)
+          diff_ne = abs((ne3-ne3o)/ne3)
+          diff_ne2 = abs(nein-ne3)
+          if ( (ne1-nein)*(ne3-nein) > 0 ) then
+            mu1=mu3
+            ne1=ne3
+          else
+            mu2=mu3
+          end if
+
+          ne3o = ne3
+          diff_mu = mu3 - muo
+          muo  = mu3
+        end do
+      end do ITERATION
+
+      muout = mu3
+      call mu2ne(muout,ne3)
+    
+    end subroutine ne2mu_core
+    
+  END SUBROUTINE ne2mu_dcdft
   
 !===================================================================================================================================
   

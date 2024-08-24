@@ -181,12 +181,16 @@ DFT_Iteration : do iter=Miter+1,nscf
    else if(yn_dc=='y') then
    ! Divide-and-Conquer method
      call copy_density(Miter,system%nspin,dc%mg_tot,dc%rho_tot_s,mixing)
+     ! occupation
+     if(temperature>=0.d0 .and. Miter>nscf_init_redistribution) then
+       call ne2mu_dcdft(mg,info,energy,spsi,dc,system)
+     end if
      ! rho_s for fragments
      call timer_begin(LOG_CALC_RHO)
      call calc_density(system,rho_s,spsi,info,mg)
      call timer_end(LOG_CALC_RHO)
-     ! rho_s (fragment) --> dc%rho_tot_s (total system) !!!!!! future work: occupancy, spsi
-     call calc_rho_total_dcdft(system%nspin,lg,mg,info,rho_s,dc) !!!!!! future work: occupancy, spsi
+     ! rho_s (fragment) --> dc%rho_tot_s (total system)
+     call calc_rho_total_dcdft(system%nspin,lg,mg,info,rho_s,dc)
      call update_density_and_potential(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot, &
      & stencil,xc_func,ppn,iter, &
      & spsi,srg,srg_scalar, & ! dummy

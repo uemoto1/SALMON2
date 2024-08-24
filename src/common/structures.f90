@@ -479,7 +479,6 @@ module structures
     integer :: icomm_tot, id_tot, isize_tot ! MPI communicator, process ID, & # of processes
     character(256) :: base_directory
     real(8) :: elec_num_tot ! total electron number
-    real(8) :: mu_tot       ! chemical potential of the total system
     type(s_dft_system)      :: system_tot
     type(s_parallel_info)   :: info_tot
     type(s_rgrid)           :: lg_tot,mg_tot
