@@ -25,7 +25,7 @@ contains
   !! export SYSNAME_k.data file
   subroutine write_k_data(system,stencil)
     use structures
-    use salmon_global, only: sysname,yn_periodic
+    use salmon_global, only: base_directory,sysname,yn_periodic
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root,comm_sync_all
     use filesystem, only: open_filehandle
@@ -42,7 +42,7 @@ contains
     end if
 
     NK = system%nk
-    file_k_data = trim(sysname)//'_k.data'
+    file_k_data = trim(base_directory)//trim(sysname)//'_k.data'
 
     if (comm_is_root(nproc_id_global)) then
       fh_k = open_filehandle(file_k_data, status="replace")
@@ -105,7 +105,7 @@ contains
     use sendrecv_grid
     use salmon_global, only: yn_out_tm,yn_out_gs_sgm_eps, &
                        out_gs_sgm_eps_mu_nu, out_gs_sgm_eps_width, &
-                       sysname, de,nenergy,nelec,xc
+                       base_directory,sysname, de,nenergy,nelec,xc
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root,comm_summation,comm_sync_all
     use filesystem, only: open_filehandle
@@ -407,9 +407,9 @@ contains
 
 
        if(yn_ikr=='n')then
-          file_tm_data = trim(sysname)//'_tm.data'
+          file_tm_data = trim(base_directory)//trim(sysname)//'_tm.data'
        else if(yn_ikr=='y')then
-          file_tm_data = trim(sysname)//'_tm_ikr.data'
+          file_tm_data = trim(base_directory)//trim(sysname)//'_tm_ikr.data'
        end if
 
        if (comm_is_root(nproc_id_global)) then
@@ -525,13 +525,13 @@ contains
 
 
        if (comm_is_root(nproc_id_global)) then
-          filename = trim(sysname) // '_sigma.data'
+          filename = trim(base_directory)//trim(sysname) // '_sigma.data'
           open(fh_s, file=filename, status='replace')
           write(fh_s,'(3a)') "#1:omega[a.u.], 2:Re(sigma)[a.u.], 3:Im(sigma)[a.u.]", &
                             & ", 4:Re(sigma_intra)[a.u.], 5:Im(sigma_intra)[a.u.]", &
                             & ", 6:Re(sigma_inter)[a.u.], 7:Im(sigma_inter)[a.u.]"
                             
-          filename = trim(sysname) // '_epsilon.data'
+          filename = trim(base_directory)//trim(sysname) // '_epsilon.data'
           open(fh_e, file=filename, status='replace')
           write(fh_e,'(3a)') "#1:omega[a.u.], 2:Re(epsilon), 3:Im(epsilon)", &
                             & ", 4:Re(epsilon_intra), 5:Im(epsilon_intra)", &
@@ -602,7 +602,7 @@ contains
   ! (these can be used for restart of opt and md)
     use structures, only: s_dft_system,s_ofile
     use inputoutput, only: au_length_aa
-    use salmon_global, only: SYSname,atom_name,base_directory
+    use salmon_global, only: base_directory,SYSname,atom_name,base_directory
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root
     use filesystem, only: open_filehandle
@@ -842,7 +842,8 @@ contains
     use structures, only: s_ofile,s_dft_energy,s_md
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root
-    use salmon_global, only: ensemble, thermostat, out_rt_energy_step, yn_periodic, yn_jm, yn_fix_func
+    use salmon_global, only: ensemble, thermostat, out_rt_energy_step, yn_periodic, yn_jm, yn_fix_func &
+    &   ,yn_out_rt_energy_components
     use filesystem, only: open_filehandle
     use inputoutput, only: yn_md,t_unit_time,t_unit_energy
     implicit none
@@ -850,7 +851,7 @@ contains
     type(s_md) :: md
     type(s_ofile) :: ofl
     integer, intent(in) :: it
-    integer :: uid
+    integer :: uid,icolumn
     real(8) :: dt
 
     if(comm_is_root(nproc_id_global)) then
@@ -862,7 +863,14 @@ contains
 10     format("#",1X,A,":",1X,A)
        write(uid,10) "Real time calculation",""
        write(uid,10) "Eall", "Total energy"
-       write(uid,10) "Eall0", "Initial energy"
+       write(uid,10) "Eall0", "Initial total energy"
+       if(yn_out_rt_energy_components=='y') then
+         write(uid,10) "E_kin", "Kinetic energy"
+         write(uid,10) "E_h", "Hartree energy"
+         write(uid,10) "E_ion", "Electron-ion energy"
+         write(uid,10) "E_xc", "Exchange-correlation energy"
+         write(uid,10) "E_ion_ion", "Ion-ion energy"
+       end if
        if(yn_md=='y') then
        write(uid,10) "Tion", "Kinetic energy of ions"
        write(uid,10) "Temperature_ion", "Temperature of ions"
@@ -878,23 +886,35 @@ contains
          write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
           & 1, "Time", trim(t_unit_time%name), &
           & 2, "Eall-Eall0", trim(t_unit_energy%name)
+         icolumn=2
        else
          write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
           & 1, "Time", trim(t_unit_time%name), &
           & 2, "Eall", trim(t_unit_energy%name), &
           & 3, "Eall-Eall0", trim(t_unit_energy%name)
+         icolumn=3
+       end if
+
+       if(yn_out_rt_energy_components=='y') then
+         write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
+         & icolumn+1, "E_kin", trim(t_unit_energy%name), &
+         & icolumn+2, "E_h", trim(t_unit_energy%name), &
+         & icolumn+3, "E_ion", trim(t_unit_energy%name), &
+         & icolumn+4, "E_xc", trim(t_unit_energy%name), &
+         & icolumn+5, "E_ion_ion", trim(t_unit_energy%name)
+         icolumn = icolumn + 5
        end if
 
        if(yn_md=='y') then
        write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
-        & 4, "Tion", trim(t_unit_energy%name), &
-        & 5, "Temperature_ion", "K", &
-        & 6, "E_work", trim(t_unit_energy%name)
+        & icolumn+1, "Tion", trim(t_unit_energy%name), &
+        & icolumn+2, "Temperature_ion", "K", &
+        & icolumn+3, "E_work", trim(t_unit_energy%name)
        if(ensemble=="NVT".and.thermostat=="nose-hoover")then
        write(uid, '("#",99(1X,I0,":",A,"[",A,"]"))',advance='no') &
-        & 7, "Enh",  trim(t_unit_energy%name), &
-        & 8, "Hnvt", trim(t_unit_energy%name), &
-        & 9, "Hnvt'",trim(t_unit_energy%name)
+        & icolumn+4, "Enh",  trim(t_unit_energy%name), &
+        & icolumn+5, "Hnvt", trim(t_unit_energy%name), &
+        & icolumn+6, "Hnvt'",trim(t_unit_energy%name)
        endif
        endif
 
@@ -910,6 +930,14 @@ contains
              & 0d0,        &
              & energy%E_tot0 * t_unit_energy%conv, &
              & 0d0
+       end if
+       if(yn_out_rt_energy_components=='y') then
+         write(uid, "(99(1X,E23.15E3))",advance='no') &
+         & energy%E_kin * t_unit_energy%conv, &
+         & energy%E_h * t_unit_energy%conv, &
+         & (energy%E_ion_loc+energy%E_ion_nloc) * t_unit_energy%conv, &
+         & energy%E_xc * t_unit_energy%conv, &
+         & energy%E_ion_ion * t_unit_energy%conv
        end if
        if(yn_md=='y') then
          write(uid, "(99(1X,E23.15E3))",advance='no') &
@@ -934,6 +962,14 @@ contains
                & it * dt * t_unit_time%conv,        &
                & energy%E_tot * t_unit_energy%conv, &
                & (energy%E_tot-energy%E_tot0) * t_unit_energy%conv
+          end if
+          if(yn_out_rt_energy_components=='y') then
+            write(uid, "(99(1X,E23.15E3))",advance='no') &
+            & energy%E_kin * t_unit_energy%conv, &
+            & energy%E_h * t_unit_energy%conv, &
+            & (energy%E_ion_loc+energy%E_ion_nloc) * t_unit_energy%conv, &
+            & energy%E_xc * t_unit_energy%conv, &
+            & energy%E_ion_ion * t_unit_energy%conv
           end if
           if(yn_md=='y') then
           write(uid, "(99(1X,E23.15E3))",advance='no') &
@@ -1129,7 +1165,7 @@ contains
   subroutine write_dft_md_data(it,ofl,md)
     use structures, only: s_md, s_ofile
     use inputoutput, only: t_unit_time,t_unit_energy
-    use salmon_global, only: dt,nt,sysname
+    use salmon_global, only: dt,nt,base_directory,sysname
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root,comm_sync_all
     use filesystem, only: open_filehandle
@@ -1139,7 +1175,7 @@ contains
     integer :: uid, it
 
     if(it==0 .and. comm_is_root(nproc_id_global)) then
-       ofl%file_dft_md = trim(sysname)//'_dft_md.data'
+       ofl%file_dft_md = trim(base_directory)//trim(sysname)//'_dft_md.data'
        ofl%fh_dft_md   = open_filehandle(ofl%file_dft_md)
        uid = ofl%fh_dft_md
        open(uid,file=trim(ofl%file_dft_md),status="unknown")
@@ -1428,7 +1464,7 @@ contains
   subroutine write_info_data(Miter,system,energy,pp)
     use structures
     use salmon_global,       only: natom,nelem,iZatom,nelec,sysname,nstate,nelec_spin,unit_system, &
-                                   yn_jm, yn_periodic
+                                   yn_jm, yn_periodic, base_directory
     use parallelization,     only: nproc_id_global
     use communication,only: comm_is_root
     use filesystem,         only: open_filehandle
@@ -1442,7 +1478,7 @@ contains
     integer :: fh,is,p1,p2,p5,iob,jj,ik,ikoa,iatom,ix
     character(100) :: file_gs_info
 
-    file_gs_info = trim(sysname)//"_info.data"
+    file_gs_info = trim(base_directory)//trim(sysname)//"_info.data"
     fh = open_filehandle(trim(file_gs_info))
 
     if(comm_is_root(nproc_id_global)) then
@@ -1531,7 +1567,7 @@ contains
     use structures, only: s_ofile, s_dft_system, s_dft_energy
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root
-    use inputoutput, only: uenergy_from_au,iperiodic,unit_energy,sysname
+    use inputoutput, only: uenergy_from_au,iperiodic,unit_energy,sysname,base_directory
     use filesystem, only: open_filehandle
     implicit none
     type(s_ofile),intent(inout) :: ofl
@@ -1540,7 +1576,7 @@ contains
     integer :: iob,iik,is, uid
 
     if(comm_is_root(nproc_id_global))then
-       ofl%file_eigen_data=trim(sysname)//"_eigen.data"
+       ofl%file_eigen_data=trim(base_directory)//trim(sysname)//"_eigen.data"
        ofl%fh_eigen = open_filehandle(trim(ofl%file_eigen_data))
        uid = ofl%fh_eigen
        open(uid,file=ofl%file_eigen_data)
@@ -1577,7 +1613,7 @@ contains
     use inputoutput, only: uenergy_from_au
     use salmon_global, only: out_dos_start, out_dos_end, out_dos_function, &
                            out_dos_width, out_dos_nenergy, yn_out_dos_set_fe_origin, unit_energy, &
-                           nelec,nstate,temperature,yn_spinorbit
+                           nelec,nstate,temperature,yn_spinorbit, base_directory,sysname
     implicit none
     type(s_dft_system),intent(in) :: system
     type(s_dft_energy),intent(in) :: energy
@@ -1587,6 +1623,7 @@ contains
     real(8) :: fk,ww,dw
     integer :: iw,index_vbm
     real(8) :: ene_min,ene_max,eshift
+    character(100) :: filename
 
     ene_min = minval(energy%esp)
     ene_max = maxval(energy%esp)
@@ -1632,7 +1669,8 @@ contains
     end do
 
     if(comm_is_root(nproc_id_global))then
-      open(101,file="dos.data")
+      filename=trim(base_directory)//trim(sysname)//"_dos.data"
+      open(101,file=filename)
       write(101,'("# Density of States")')
       select case(unit_energy)
       case('au','a.u.')
@@ -1660,7 +1698,8 @@ contains
     use communication       ,only: comm_is_root, comm_summation
     use salmon_global       ,only: out_dos_start, out_dos_end, out_dos_function, &
                                    out_dos_width, out_dos_nenergy, yn_out_dos_set_fe_origin, &
-                                   nelec, kion, natom, nstate, unit_energy, temperature, yn_spinorbit
+                                   nelec, kion, natom, nstate, unit_energy, temperature, yn_spinorbit, &
+                                   base_directory,sysname
     use inputoutput         ,only: uenergy_from_au
     use prep_pp_sub         ,only: bisection
     implicit none
@@ -1787,7 +1826,7 @@ contains
       do iatom=1,natom
         ikoa=Kion(iatom)
         write(fileNumber, '(i8)') iatom
-        OutFile = "pdos"//trim(adjustl(fileNumber))//".data"
+        OutFile = trim(base_directory)//trim(sysname)//"_pdos"//trim(adjustl(fileNumber))//".data"
         open(101,file=OutFile)
         write(101,'("# Projected Density of States")')
         select case(unit_energy)

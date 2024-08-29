@@ -130,6 +130,7 @@ module salmon_global
 !! &kgrid
   integer        :: num_kgrid(3)
   character(256) :: file_kw
+  real(8)        :: dk_shift(3)
 
 !! &tgrid
   integer        :: nt
@@ -350,6 +351,7 @@ module salmon_global
   character(1)   :: yn_out_mag_micro_rt
   character(1)   :: yn_out_spin_current_decomposed
   character(1)   :: yn_out_spin_current_micro
+  character(1)   :: yn_out_rt_energy_components
   character(1)   :: yn_out_perflog
   character(6)   :: format_perflog ! 'stdout','text','csv'
   
