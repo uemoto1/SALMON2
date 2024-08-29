@@ -219,7 +219,8 @@ if(yn_out_tm  == 'y'.or.yn_out_gs_sgm_eps=='y') then
    select case(iperiodic)
    case(3)
       call write_k_data(system,stencil)  !need? (probably remove later)
-      call write_tm_data(spsi,system,info,mg,stencil,srg,ppg,energy)
+      call write_tm_data(spsi,system,info,mg,stencil,srg,ppg,energy,'n')
+      call write_tm_data(spsi,system,info,mg,stencil,srg,ppg,energy,'y')
    case(0)
      write(*,*) "error: yn_out_tm='y',yn_out_gs_sgm_eps='y' & iperiodic=0"
   end select
