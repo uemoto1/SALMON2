@@ -71,7 +71,7 @@ subroutine solve_orbitals(mg,system,info,stencil,spsi,shpsi,srg,cg,ppg,vlocal,  
 
 end subroutine solve_orbitals
 
-subroutine update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,iter, &
+subroutine update_density_and_potential(lg,mg,system,info,stencil,xc_func,pp,ppn,iter, &
                spsi,srg,srg_scalar,poisson,fg,rho,rho_s,rho_jm,Vpsl,Vh,Vxc,vlocal,mixing,energy )
   use structures
   use salmon_global, only: method_mixing,yn_jm,yn_spinorbit
@@ -87,6 +87,7 @@ subroutine update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,it
   type(s_parallel_info),  intent(in)    :: info
   type(s_stencil),        intent(in)    :: stencil
   type(s_xc_functional),  intent(in)    :: xc_func
+  type(s_pp_info),        intent(in)    :: pp
   type(s_pp_nlcc),        intent(in)    :: ppn
   integer,                intent(in)    :: iter
   type(s_orbital),        intent(inout) :: spsi
@@ -128,9 +129,10 @@ subroutine update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,it
   call hartree(lg,mg,info,system,fg,poisson,srg_scalar,stencil,rho,Vh)
   call timer_end(LOG_CALC_HARTREE)
 
-  call timer_begin(LOG_CALC_EXC_COR)
-  call exchange_correlation(system,xc_func,mg,srg_scalar,srg,rho_s,ppn,info,spsi,stencil,Vxc,energy%E_xc)
-  call timer_end(LOG_CALC_EXC_COR)
+    call timer_begin(LOG_CALC_EXC_COR)
+    call exchange_correlation(system,xc_func,mg,srg_scalar,srg,rho_s,pp,ppn,info,spsi,stencil,Vxc,energy%E_xc)
+    call timer_end(LOG_CALC_EXC_COR)
+
 
   if(method_mixing=='simple_potential')then
     call simple_mixing_potential(mg,system,1.d0-mixing%mixrate,mixing%mixrate,Vh,Vxc,mixing)
