@@ -25,7 +25,7 @@ contains
   !! export SYSNAME_k.data file
   subroutine write_k_data(system,stencil)
     use structures
-    use salmon_global, only: sysname,yn_periodic
+    use salmon_global, only: base_directory,sysname,yn_periodic
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root,comm_sync_all
     use filesystem, only: open_filehandle
@@ -42,7 +42,7 @@ contains
     end if
 
     NK = system%nk
-    file_k_data = trim(sysname)//'_k.data'
+    file_k_data = trim(base_directory)//trim(sysname)//'_k.data'
 
     if (comm_is_root(nproc_id_global)) then
       fh_k = open_filehandle(file_k_data, status="replace")
@@ -99,13 +99,13 @@ contains
 !===================================================================================================================================
 
   !! export SYSNAME_tm.data, SYSNAME_sigma.data, SYSNAME_epsilon.data file
-  subroutine write_tm_data(tpsi,system,info,mg,stencil,srg,ppg,energy)
+  subroutine write_tm_data(tpsi,system,info,mg,stencil,srg,ppg,energy,yn_ikr)
     use structures
     use stencil_sub
     use sendrecv_grid
     use salmon_global, only: yn_out_tm,yn_out_gs_sgm_eps, &
                        out_gs_sgm_eps_mu_nu, out_gs_sgm_eps_width, &
-                       sysname, de,nenergy,nelec,xc
+                       base_directory,sysname, de,nenergy,nelec,xc
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root,comm_summation,comm_sync_all
     use filesystem, only: open_filehandle
@@ -118,7 +118,9 @@ contains
     type(s_sendrecv_grid),intent(inout) :: srg
     type(s_pp_grid),intent(in) :: ppg
     type(s_orbital)       :: tpsi
+    type(s_orbital)       :: tpsi_backup
     type(s_dft_energy) :: energy
+    character(1),intent(in) :: yn_ikr
     !
     logical :: flag_print_tm, flag_print_eps
     integer :: fh_tm, narray
@@ -143,6 +145,7 @@ contains
     complex(8) :: sigma_l,sigma_intra_l
     character(256) :: filename
     integer,parameter :: fh_s=333,fh_e=777
+    complex(8),allocatable :: expikr(:,:,:,:)
 
     flag_print_tm = .false.
     flag_print_eps= .false.
@@ -198,6 +201,39 @@ contains
     ie = mg%ie
 
     Nlma = ppg%Nlma
+
+    if(yn_ikr=='y')then
+       if(.not. allocated(tpsi_backup%zwf)) then
+         call allocate_orbital_complex(system%nspin,mg,info,tpsi_backup)
+       end if
+       tpsi_backup%zwf(:,:,:,:,:,:,:) = tpsi%zwf(:,:,:,:,:,:,:)
+   
+       allocate(expikr(is(1):ie(1),is(2):ie(2),is(3):ie(3),ik_s:ik_e))
+       do ik=ik_s,ik_e
+         do iz=is(3),ie(3)
+         do iy=is(2),ie(2)
+         do ix=is(1),ie(1)
+           expikr(ix,iy,iz,ik) = exp(zi*(system%vec_k(1,ik)*dble(ix-1)*system%Hgs(1) &
+                                        +system%vec_k(2,ik)*dble(iy-1)*system%Hgs(2) &
+                                        +system%vec_k(3,ik)*dble(iz-1)*system%Hgs(3)))
+         end do
+         end do
+         end do
+       end do
+   
+       do ik=ik_s,ik_e
+         do ib=io_s,io_e
+           do iz=is(3),ie(3)
+           do iy=is(2),ie(2)
+           do ix=is(1),ie(1)
+             tpsi%zwf(ix,iy,iz,ispin,ib,ik,im) = expikr(ix,iy,iz,ik) * tpsi%zwf(ix,iy,iz,ispin,ib,ik,im)
+           end do
+           end do
+           end do
+         end do
+       end do
+       deallocate(expikr)
+    end if
 
     !calculate <u_nk|p_j|u_mk>  (j=x,y,z)
 
@@ -370,7 +406,11 @@ contains
        deallocate(u_rVnl_Vnlr_u_all_l)
 
 
-       file_tm_data = trim(sysname)//'_tm.data'
+       if(yn_ikr=='n')then
+          file_tm_data = trim(base_directory)//trim(sysname)//'_tm.data'
+       else if(yn_ikr=='y')then
+          file_tm_data = trim(base_directory)//trim(sysname)//'_tm_ikr.data'
+       end if
 
        if (comm_is_root(nproc_id_global)) then
           write(*,*) "  printing transition moment ....."
@@ -485,13 +525,13 @@ contains
 
 
        if (comm_is_root(nproc_id_global)) then
-          filename = trim(sysname) // '_sigma.data'
+          filename = trim(base_directory)//trim(sysname) // '_sigma.data'
           open(fh_s, file=filename, status='replace')
           write(fh_s,'(3a)') "#1:omega[a.u.], 2:Re(sigma)[a.u.], 3:Im(sigma)[a.u.]", &
                             & ", 4:Re(sigma_intra)[a.u.], 5:Im(sigma_intra)[a.u.]", &
                             & ", 6:Re(sigma_inter)[a.u.], 7:Im(sigma_inter)[a.u.]"
                             
-          filename = trim(sysname) // '_epsilon.data'
+          filename = trim(base_directory)//trim(sysname) // '_epsilon.data'
           open(fh_e, file=filename, status='replace')
           write(fh_e,'(3a)') "#1:omega[a.u.], 2:Re(epsilon), 3:Im(epsilon)", &
                             & ", 4:Re(epsilon_intra), 5:Im(epsilon_intra)", &
@@ -546,6 +586,11 @@ contains
 
     endif
 
+    if(yn_ikr=='y')then
+       tpsi%zwf(:,:,:,:,:,:,:) = tpsi_backup%zwf(:,:,:,:,:,:,:)
+       call deallocate_orbital(tpsi_backup)
+    end if
+
     call comm_sync_all
     return
   end subroutine write_tm_data
@@ -557,7 +602,7 @@ contains
   ! (these can be used for restart of opt and md)
     use structures, only: s_dft_system,s_ofile
     use inputoutput, only: au_length_aa
-    use salmon_global, only: SYSname,atom_name,base_directory
+    use salmon_global, only: base_directory,SYSname,atom_name,base_directory
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root
     use filesystem, only: open_filehandle
@@ -1120,7 +1165,7 @@ contains
   subroutine write_dft_md_data(it,ofl,md)
     use structures, only: s_md, s_ofile
     use inputoutput, only: t_unit_time,t_unit_energy
-    use salmon_global, only: dt,nt,sysname
+    use salmon_global, only: dt,nt,base_directory,sysname
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root,comm_sync_all
     use filesystem, only: open_filehandle
@@ -1130,7 +1175,7 @@ contains
     integer :: uid, it
 
     if(it==0 .and. comm_is_root(nproc_id_global)) then
-       ofl%file_dft_md = trim(sysname)//'_dft_md.data'
+       ofl%file_dft_md = trim(base_directory)//trim(sysname)//'_dft_md.data'
        ofl%fh_dft_md   = open_filehandle(ofl%file_dft_md)
        uid = ofl%fh_dft_md
        open(uid,file=trim(ofl%file_dft_md),status="unknown")
@@ -1419,7 +1464,7 @@ contains
   subroutine write_info_data(Miter,system,energy,pp)
     use structures
     use salmon_global,       only: natom,nelem,iZatom,nelec,sysname,nstate,nelec_spin,unit_system, &
-                                   yn_jm, yn_periodic
+                                   yn_jm, yn_periodic, base_directory
     use parallelization,     only: nproc_id_global
     use communication,only: comm_is_root
     use filesystem,         only: open_filehandle
@@ -1433,7 +1478,7 @@ contains
     integer :: fh,is,p1,p2,p5,iob,jj,ik,ikoa,iatom,ix
     character(100) :: file_gs_info
 
-    file_gs_info = trim(sysname)//"_info.data"
+    file_gs_info = trim(base_directory)//trim(sysname)//"_info.data"
     fh = open_filehandle(trim(file_gs_info))
 
     if(comm_is_root(nproc_id_global)) then
@@ -1522,7 +1567,7 @@ contains
     use structures, only: s_ofile, s_dft_system, s_dft_energy
     use parallelization, only: nproc_id_global
     use communication, only: comm_is_root
-    use inputoutput, only: uenergy_from_au,iperiodic,unit_energy,sysname
+    use inputoutput, only: uenergy_from_au,iperiodic,unit_energy,sysname,base_directory
     use filesystem, only: open_filehandle
     implicit none
     type(s_ofile),intent(inout) :: ofl
@@ -1531,7 +1576,7 @@ contains
     integer :: iob,iik,is, uid
 
     if(comm_is_root(nproc_id_global))then
-       ofl%file_eigen_data=trim(sysname)//"_eigen.data"
+       ofl%file_eigen_data=trim(base_directory)//trim(sysname)//"_eigen.data"
        ofl%fh_eigen = open_filehandle(trim(ofl%file_eigen_data))
        uid = ofl%fh_eigen
        open(uid,file=ofl%file_eigen_data)
@@ -1568,7 +1613,7 @@ contains
     use inputoutput, only: uenergy_from_au
     use salmon_global, only: out_dos_start, out_dos_end, out_dos_function, &
                            out_dos_width, out_dos_nenergy, yn_out_dos_set_fe_origin, unit_energy, &
-                           nelec,nstate,temperature,yn_spinorbit
+                           nelec,nstate,temperature,yn_spinorbit, base_directory,sysname
     implicit none
     type(s_dft_system),intent(in) :: system
     type(s_dft_energy),intent(in) :: energy
@@ -1578,6 +1623,7 @@ contains
     real(8) :: fk,ww,dw
     integer :: iw,index_vbm
     real(8) :: ene_min,ene_max,eshift
+    character(100) :: filename
 
     ene_min = minval(energy%esp)
     ene_max = maxval(energy%esp)
@@ -1623,7 +1669,8 @@ contains
     end do
 
     if(comm_is_root(nproc_id_global))then
-      open(101,file="dos.data")
+      filename=trim(base_directory)//trim(sysname)//"_dos.data"
+      open(101,file=filename)
       write(101,'("# Density of States")')
       select case(unit_energy)
       case('au','a.u.')
@@ -1651,7 +1698,8 @@ contains
     use communication       ,only: comm_is_root, comm_summation
     use salmon_global       ,only: out_dos_start, out_dos_end, out_dos_function, &
                                    out_dos_width, out_dos_nenergy, yn_out_dos_set_fe_origin, &
-                                   nelec, kion, natom, nstate, unit_energy, temperature, yn_spinorbit
+                                   nelec, kion, natom, nstate, unit_energy, temperature, yn_spinorbit, &
+                                   base_directory,sysname
     use inputoutput         ,only: uenergy_from_au
     use prep_pp_sub         ,only: bisection
     implicit none
@@ -1778,7 +1826,7 @@ contains
       do iatom=1,natom
         ikoa=Kion(iatom)
         write(fileNumber, '(i8)') iatom
-        OutFile = "pdos"//trim(adjustl(fileNumber))//".data"
+        OutFile = trim(base_directory)//trim(sysname)//"_pdos"//trim(adjustl(fileNumber))//".data"
         open(101,file=OutFile)
         write(101,'("# Projected Density of States")')
         select case(unit_energy)
