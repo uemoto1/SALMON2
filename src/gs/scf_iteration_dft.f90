@@ -108,7 +108,7 @@ if(nscf_init_mix_zero.gt.1)then
       call copy_density(iter,system%nspin,mg,rho_s,mixing)
       call scf_iteration_step(lg,mg,system,info,stencil,  &
                      srg,srg_scalar,spsi,shpsi,rho,rho_jm,rho_s,  &
-                     cg,ppg,V_local,  &
+                     cg,pp,ppg,V_local,  &
                      iter,  &
                      nscf_init_no_diagonal, mixing, iter,  &
                      poisson,fg,Vh,xc_func,ppn,Vxc,energy)
@@ -183,7 +183,7 @@ DFT_Iteration : do iter=Miter+1,nscf
    call copy_density(Miter,system%nspin,mg,rho_s,mixing)
    call scf_iteration_step(lg,mg,system,info,stencil,  &
                      srg,srg_scalar,spsi,shpsi,rho,rho_jm,rho_s,  &
-                     cg,ppg,V_local,  &
+                     cg,pp,ppg,V_local,  &
                      Miter,  &
                      nscf_init_no_diagonal, mixing, iter,  &
                      poisson,fg,Vh,xc_func,ppn,Vxc,energy)

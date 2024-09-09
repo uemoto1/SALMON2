@@ -21,7 +21,7 @@ contains
 
 subroutine scf_iteration_step(lg,mg,system,info,stencil, &
                srg,srg_scalar,spsi,shpsi,rho,rho_jm,rho_s, &
-               cg,ppg,vlocal,  &
+               cg,pp,ppg,vlocal,  &
                miter,   &
                nscf_init_no_diagonal, mixing, iter, &
                poisson,fg,Vh,xc_func,ppn,Vxc,energy )
@@ -50,6 +50,7 @@ subroutine scf_iteration_step(lg,mg,system,info,stencil, &
   type(s_stencil),        intent(in)    :: stencil
   type(s_sendrecv_grid),  intent(inout) :: srg
   type(s_sendrecv_grid),  intent(inout) :: srg_scalar
+  type(s_pp_info),        intent(in)    :: pp
   type(s_pp_grid),        intent(in)    :: ppg
   type(s_cg),             intent(inout) :: cg
   type(s_scalar),         intent(in)    :: vlocal(system%nspin)
@@ -132,7 +133,7 @@ subroutine scf_iteration_step(lg,mg,system,info,stencil, &
     call timer_end(LOG_CALC_HARTREE)
 
     call timer_begin(LOG_CALC_EXC_COR)
-    call exchange_correlation(system,xc_func,mg,srg_scalar,srg,rho_s,ppn,info,spsi,stencil,Vxc,energy%E_xc)
+    call exchange_correlation(system,xc_func,mg,srg_scalar,srg,rho_s,pp,ppn,info,spsi,stencil,Vxc,energy%E_xc)
     call timer_end(LOG_CALC_EXC_COR)
 
 
