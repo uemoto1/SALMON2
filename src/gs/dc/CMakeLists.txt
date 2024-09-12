@@ -1,5 +1,6 @@
 set(SOURCES
     dcdft.f90
+    lcfo.f90
    )
 
 list_prepend(SOURCES ${CMAKE_CURRENT_SOURCE_DIR})

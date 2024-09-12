@@ -590,7 +590,9 @@ contains
     namelist/dc/ &
       & num_fragment, &
       & length_buffer, &
-      & nproc_rgrid_tot
+      & nproc_rgrid_tot, &
+      & energy_cut, &
+      & lambda_cut
 
 !! == default for &unit ==
     unit_system='au'
@@ -1003,6 +1005,8 @@ contains
     num_fragment = 0
     length_buffer = 0d0
     nproc_rgrid_tot = 1
+    energy_cut = 0d0
+    lambda_cut = 0d0
 
     if (comm_is_root(nproc_id_global)) then
       fh_namelist = get_filehandle()
@@ -1619,6 +1623,8 @@ contains
     call comm_bcast(length_buffer, nproc_group_global)
     length_buffer = length_buffer * ulength_to_au
     call comm_bcast(nproc_rgrid_tot, nproc_group_global)
+    call comm_bcast(energy_cut, nproc_group_global)
+    call comm_bcast(lambda_cut, nproc_group_global)
   end subroutine read_input_common
 
   subroutine read_atomic_coordinates
@@ -2569,6 +2575,8 @@ contains
       write(fh_variables_log, '("#",4X,A,"=",3I4)') 'num_fragment',num_fragment(1:3)
       write(fh_variables_log, '("#",4X,A,"=",3ES12.5)') "length_buffer", length_buffer(1:3)
       write(fh_variables_log, '("#",4X,A,"=",3I4)') "nproc_rgrid_tot",nproc_rgrid_tot(1:3)
+      write(fh_variables_log, '("#",4X,A,"=",ES12.5)') 'energy_cut', energy_cut
+      write(fh_variables_log, '("#",4X,A,"=",ES12.5)') 'lambda_cut', lambda_cut
       
       close(fh_variables_log)
     end if

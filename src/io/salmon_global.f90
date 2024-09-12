@@ -437,5 +437,7 @@ character(256),allocatable :: atom_name(:)
   integer        :: num_fragment(3)
   real(8)        :: length_buffer(3)
   integer        :: nproc_rgrid_tot(3)
+  real(8)        :: energy_cut
+  real(8)        :: lambda_cut
 
 end module salmon_global

@@ -47,6 +47,7 @@ use init_gs, only: init_wf
 use initialization_dft
 use jellium, only: check_condition_jm
 use dcdft
+use lcfo
 implicit none
 integer :: ix,iy,iz
 integer :: Miter,iatom,jj,nspin
@@ -323,7 +324,10 @@ call fipp_stop ! performance profiling
 !------------ Writing part -----------
 call timer_begin(LOG_WRITE_GS_RESULTS)
 
-if(yn_dc=='y') call write_total_dcdft(system,dc)
+if(yn_dc=='y') then
+  call dc_lcfo(lg,mg,system,info,stencil,ppg,v_local,spsi,shpsi,sttpsi,srg,dc)
+  call write_total_dcdft(system,dc)
+end if
 
 ! write GS: basic data
 call write_band_information(system,energy)
