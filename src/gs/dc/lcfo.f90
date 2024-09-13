@@ -22,7 +22,6 @@ contains
     use communication, only: comm_summation
     use eigen_subdiag_sub, only: eigen_dsyev
     use structures
-use mpi !!!!!!!!! test_lcfo
     implicit none
     type(s_rgrid),        intent(in) :: lg,mg
     type(s_dft_system),   intent(in) :: system
@@ -36,7 +35,7 @@ use mpi !!!!!!!!! test_lcfo
     type(s_dcdft)                    :: dc
     !
     type halo_info
-      integer :: id_src,id_dst,ifrag_src,ifrag_dst,dvec(3),len(3),dsp_send(3),dsp_recv(3)
+      integer :: id_src,id_dst,ifrag_src,ifrag_dst,dvec(3),length(3),dsp_send(3),dsp_recv(3)
       real(8),allocatable :: buf_send(:,:,:,:,:),buf_recv(:,:,:,:,:),mat_H_local(:,:,:)
     end type halo_info
     !
@@ -49,7 +48,7 @@ use mpi !!!!!!!!! test_lcfo
     !
     real(8),allocatable :: f_basis(:,:,:,:,:),hf(:,:,:,:,:),wrk_array(:,:,:,:,:)
 
-integer :: nnn,comm,ierr ; comm = dc%icomm_tot !!!!!!!!! test_lcfo
+integer :: nnn !!!!!!!!! test_lcfo
     
     hvol = system%hvol
     nspin = system%nspin
@@ -61,13 +60,9 @@ integer :: nnn,comm,ierr ; comm = dc%icomm_tot !!!!!!!!! test_lcfo
     
     call hpsi_basis
     
-call MPI_BARRIER(comm,ierr) ; if(dc%id_tot==0) write(*,*) "test_lcfo: end hpsi_basis" !!!!!!!!! test_lcfo
-    
     call calc_hamiltonian_matrix
     
-call MPI_BARRIER(comm,ierr) ; if(dc%id_tot==0) write(*,*) "test_lcfo: end calc_hamiltonian_matrix" !!!!!!!!! test_lcfo
-    
-    call diagonalization(mat_H,mat_V,esp_tot)
+    call diagonalization(n_mat,mat_H,mat_V,esp_tot)
     
   contains
   
@@ -100,7 +95,7 @@ call MPI_BARRIER(comm,ierr) ; if(dc%id_tot==0) write(*,*) "test_lcfo: end calc_h
         halo(i)%id_src = -1
         do ifrag=1,dc%n_frag
         ! dc%ixyz_frag: r-grid index of the fragment origin
-          ir1(1:3) = dc%ixyz_frag(1:3,ifrag) ! fragment ifrag
+          ir1(1:3) = dc%ixyz_frag(1:3,ifrag) ! position of fragment ifrag
         ! dst neighbor (+)
           ir2(1:3) = dc%ixyz_frag(1:3,dc%i_frag) + halo(i)%dvec(1:3)*dc%nxyz_domain(1:3) ! neighbor fragment
           d(1:3) = mod( ir1(1:3) - ir2(1:3) , dc%lg_tot%num(1:3) )
@@ -123,7 +118,22 @@ call MPI_BARRIER(comm,ierr) ; if(dc%id_tot==0) write(*,*) "test_lcfo: end calc_h
       n_halo = i
       
       do i=1,n_halo
-        allocate(halo(i)%mat_H_local(dc%nstate_frag,dc%nstate_frag,system%nspin))
+        do n=1,3 ! x,y,z
+          select case (halo(i)%dvec(n))
+          case(0)
+            halo(i)%length(n) = dc%nxyz_domain(n)
+            halo(i)%dsp_send(n) = 0
+            halo(i)%dsp_recv(n) = 0
+          case(1)
+            halo(i)%length(n) = dc%nxyz_buffer(n)
+            halo(i)%dsp_send(n) = dc%nxyz_domain(n) - dc%nxyz_buffer(n)
+            halo(i)%dsp_recv(n) = dc%nxyz_domain(n) + dc%nxyz_buffer(n)
+          case(-1)
+            halo(i)%length(n) = dc%nxyz_buffer(n)
+            halo(i)%dsp_send(n) = 0
+            halo(i)%dsp_recv(n) = dc%nxyz_domain(n)
+          end select
+        end do
       end do
     
     end subroutine init_lcfo
@@ -162,40 +172,53 @@ call MPI_BARRIER(comm,ierr) ; if(dc%id_tot==0) write(*,*) "test_lcfo: end calc_h
       end do
       end do
       end do
+      
+    ! diagonalize mat_S
       do ispin=1,nspin
-        call eigen_dsyev(mat_S(:,:,ispin),lambda(:,ispin),mat_U(:,:,ispin)) ! diagonalize mat_S
+        call eigen_dsyev(mat_S(:,:,ispin),lambda(:,ispin),mat_U(:,:,ispin))
       end do
       
-    ! sttpsi & f_basis <-- | lambda > (basis functions)
+    ! f_basis <-- | lambda > (basis functions)
       wrk_array = f_basis
       f_basis = 0d0
-      sttpsi%rwf = 0d0
       do ispin=1,nspin
       do io=1,dc%nstate_frag
-        do jo=1,dc%nstate_frag
-          f_basis(:,:,:,ispin,io) = f_basis(:,:,:,ispin,io) &
-          & + wrk_array(:,:,:,ispin,jo) * mat_U(jo,io,ispin) / sqrt(lambda(io,ispin))
-        end do
-        if(info%io_s <= io .and. io <= info%io_e) then
-          do iz=mg%is(3),mg%ie(3)
-          do iy=mg%is(2),mg%ie(2)
-          do ix=mg%is(1),mg%ie(1)
-            if( ix <= dc%nxyz_domain(1) .and. iy <= dc%nxyz_domain(2) .and. iz <= dc%nxyz_domain(3) ) then
-              sttpsi%rwf(ix,iy,iz,ispin,io,1,1) = f_basis(ix,iy,iz,ispin,io)
-            end if
-          end do
-          end do
-          end do
-        end if
+      do jo=1,dc%nstate_frag
+        f_basis(:,:,:,ispin,io) = f_basis(:,:,:,ispin,io) &
+        & + wrk_array(:,:,:,ispin,jo) * mat_U(jo,io,ispin) / sqrt(lambda(io,ispin))
+      end do
       end do ! io
       end do ! ispin
+      
+    ! sttpsi <-- f_basis == | lambda > (basis functions)
+      sttpsi%rwf = 0d0
+      do io=info%io_s,info%io_e
+      do ispin=1,nspin
+      do iz=mg%is(3),mg%ie(3)
+      do iy=mg%is(2),mg%ie(2)
+      do ix=mg%is(1),mg%ie(1)
+        if( ix <= dc%nxyz_domain(1) .and. iy <= dc%nxyz_domain(2) .and. iz <= dc%nxyz_domain(3) ) then
+          sttpsi%rwf(ix,iy,iz,ispin,io,1,1) = f_basis(ix,iy,iz,ispin,io)
+        end if
+      end do
+      end do
+      end do
+      end do
+      end do
 
 if(dc%id_frag==0) then !!!!!!!!! test_lcfo
+nnn=4000
+nnn=nnn+dc%i_frag
+write(nnn,*) "# lambda"
+do io=1,dc%nstate_frag
+  write(nnn,*) lambda(io,1)
+end do
 nnn=1000
 nnn=nnn+dc%i_frag
+write(nnn,*) "# i, j, < lambda_i | lambda_j >"
 do io=1,dc%nstate_frag
 do jo=1,dc%nstate_frag
-  write(nnn,*) "mat_S",io,jo, sum(f_basis(:,:,:,1,io)*f_basis(:,:,:,1,jo)) * hvol
+  write(nnn,*) io,jo, sum(f_basis(:,:,:,1,io)*f_basis(:,:,:,1,jo)) * hvol
 end do
 end do
 end if !!!!!!!!! test_lcfo
@@ -235,9 +258,9 @@ end if !!!!!!!!! test_lcfo
     end subroutine hpsi_basis
     
     subroutine calc_hamiltonian_matrix
-      use communication, only: comm_isend, comm_irecv, comm_wait_all, comm_bcast
+      use communication, only: comm_isend, comm_irecv, comm_wait_all
       implicit none
-      integer :: ix,iy,iz,io,jo,ispin,i_halo,n,d(3),l(3),ifrag,jfrag
+      integer :: ix,iy,iz,io,jo,ispin,i_halo,d(3),l(3),ifrag,jfrag
       integer :: itag_send,itag_recv
       integer,dimension(n_halo) :: ireq_send,ireq_recv
       real(8) :: wrk
@@ -245,26 +268,10 @@ end if !!!!!!!!! test_lcfo
       if(dc%id_frag==0) then
       ! halo communication for f_basis == | lambda >
         do i_halo=1,n_halo
-          do n=1,3 ! x,y,z
-            select case (halo(i_halo)%dvec(n))
-            case(0)
-              halo(i_halo)%len(n) = dc%nxyz_domain(n)
-              halo(i_halo)%dsp_send(n) = 0
-              halo(i_halo)%dsp_recv(n) = 0
-            case(1)
-              halo(i_halo)%len(n) = dc%nxyz_buffer(n)
-              halo(i_halo)%dsp_send(n) = dc%nxyz_domain(n) - dc%nxyz_buffer(n)
-              halo(i_halo)%dsp_recv(n) = dc%nxyz_domain(n) + dc%nxyz_buffer(n)
-            case(-1)
-              halo(i_halo)%len(n) = dc%nxyz_buffer(n)
-              halo(i_halo)%dsp_send(n) = 0
-              halo(i_halo)%dsp_recv(n) = dc%nxyz_domain(n)
-            end select
-          end do
-          l = halo(i_halo)%len
+          l = halo(i_halo)%length
           d = halo(i_halo)%dsp_send
-          allocate(halo(i_halo)%buf_send(l(1),l(2),l(3),nspin,dc%nstate_frag), &
-          &        halo(i_halo)%buf_recv(l(1),l(2),l(3),nspin,dc%nstate_frag))
+          allocate(halo(i_halo)%buf_send(l(1),l(2),l(3),nspin,dc%nstate_frag))
+          allocate(halo(i_halo)%buf_recv(l(1),l(2),l(3),nspin,dc%nstate_frag))
           do iz=1,l(3)
           do iy=1,l(2)
           do ix=1,l(1)
@@ -284,8 +291,9 @@ write(*,*) "test_lcfo: sendrecv",i_halo,dc%i_frag,dc%id_tot,halo(i_halo)%id_dst,
         call comm_wait_all(ireq_send)
       ! halo(i_halo)%mat_H_local: local Hamiltonian matrix < lambda | H | lambda > (off-diagonal block)
         do i_halo=1,n_halo
-          l = halo(i_halo)%len
+          l = halo(i_halo)%length
           d = halo(i_halo)%dsp_recv
+          allocate(halo(i_halo)%mat_H_local(dc%nstate_frag,dc%nstate_frag,system%nspin))
           halo(i_halo)%mat_H_local = 0d0
           do ispin=1,nspin
           do io=1,dc%nstate_frag
@@ -305,26 +313,24 @@ write(*,*) "test_lcfo: sendrecv",i_halo,dc%i_frag,dc%id_tot,halo(i_halo)%id_dst,
         end do
       end if ! dc%id_frag==0
       
-      do i_halo=1,n_halo
-        call comm_bcast(halo(i_halo)%mat_H_local,dc%icomm_frag)
-      end do
-      
 if(dc%id_frag==0) then !!!!!!!!! test_lcfo
 nnn=2000
 nnn=nnn+dc%i_frag
 l = dc%nxyz_domain
+write(nnn,*) "# i,j,mat_H(i,j)"
 do io=1,dc%nstate_frag
 do jo=1,dc%nstate_frag
-  write(nnn,*) "mat_H",io,jo, sum(f_basis(1:l(1),1:l(2),1:l(3),1,io)*hf(1:l(1),1:l(2),1:l(3),1,jo)) * hvol
+  write(nnn,*) io,jo, sum(f_basis(1:l(1),1:l(2),1:l(3),1,io)*hf(1:l(1),1:l(2),1:l(3),1,jo)) * hvol
 end do
 end do
 nnn=3000
 nnn=nnn+dc%i_frag
 l = dc%nxyz_domain
+write(nnn,*) "# i_halo,i,j,mat_H(i,j) (inter-fragment)"
 do i_halo=1,n_halo
 do io=1,dc%nstate_frag
 do jo=1,dc%nstate_frag
-  write(nnn,*) "mat_H inter",i_halo,io,jo, halo(i_halo)%mat_H_local(io,jo,1)
+  write(nnn,*) i_halo,io,jo,halo(i_halo)%mat_H_local(io,jo,1)
 end do
 end do
 end do
@@ -333,9 +339,9 @@ end if !!!!!!!!! test_lcfo
     ! hat_H <-- Hamiltonian matrix < lambda | H | lambda >
       mat_V = 0d0
       if(dc%id_frag==0) then
+        ifrag = dc%i_frag
         l = dc%nxyz_domain
         do ispin=1,nspin
-          ifrag = dc%i_frag
         ! diagonal block
           do io=1,dc%nstate_frag
           do jo=1,dc%nstate_frag
@@ -361,8 +367,9 @@ end if !!!!!!!!! test_lcfo
       
     end subroutine calc_hamiltonian_matrix
     
-    subroutine diagonalization(H,V,esp)
+    subroutine diagonalization(n_mat,H,V,esp)
       implicit none
+      integer, intent(in) :: n_mat
       real(8), intent(in) :: H(n_mat,n_mat,nspin)
       real(8),intent(out) :: V(n_mat,n_mat,nspin)
       real(8),intent(out) :: esp(n_mat,nspin)
