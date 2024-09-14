@@ -1624,6 +1624,7 @@ contains
     length_buffer = length_buffer * ulength_to_au
     call comm_bcast(nproc_rgrid_tot, nproc_group_global)
     call comm_bcast(energy_cut, nproc_group_global)
+    energy_cut = energy_cut * uenergy_to_au
     call comm_bcast(lambda_cut, nproc_group_global)
   end subroutine read_input_common
 

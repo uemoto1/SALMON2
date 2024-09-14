@@ -325,7 +325,7 @@ call fipp_stop ! performance profiling
 call timer_begin(LOG_WRITE_GS_RESULTS)
 
 if(yn_dc=='y') then
-  call dc_lcfo(lg,mg,system,info,stencil,ppg,v_local,spsi,shpsi,sttpsi,srg,dc)
+  call dc_lcfo(lg,mg,system,info,stencil,ppg,energy,v_local,spsi,shpsi,sttpsi,srg,dc)
   call write_total_dcdft(system,dc)
 end if
 
