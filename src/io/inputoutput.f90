@@ -1006,7 +1006,7 @@ contains
     length_buffer = 0d0
     nproc_rgrid_tot = 1
     energy_cut = 0d0
-    lambda_cut = 0d0
+    lambda_cut = 1d-3
 
     if (comm_is_root(nproc_id_global)) then
       fh_namelist = get_filehandle()

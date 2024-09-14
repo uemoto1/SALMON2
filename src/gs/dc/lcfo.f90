@@ -14,7 +14,10 @@
 !  limitations under the License.
 !
 !--------10--------20--------30--------40--------50--------60--------70--------80--------90--------100-------110-------120-------130
-module lcfo ! DC-LCFO: Phys. Rev. B 95, 045106 (2017).
+
+! DC-LCFO method [Phys. Rev. B 95, 045106 (2017).]
+
+module lcfo
   implicit none
 contains
 
@@ -36,7 +39,7 @@ contains
     type(s_dcdft)                    :: dc
     !
     type halo_info
-      integer :: id_src,id_dst,ifrag_src,ifrag_dst,dvec(3),length(3),dsp_send(3),dsp_recv(3)
+      integer :: id_src,id_dst,ifrag_src,dvec(3),length(3),dsp_send(3),dsp_recv(3)
       real(8),allocatable :: buf_send(:,:,:,:,:),buf_recv(:,:,:,:,:),mat_H_local(:,:,:)
     end type halo_info
     !
@@ -54,7 +57,6 @@ integer :: nnn !!!!!!!!! test_lcfo
     
     hvol = system%hvol
     nspin = system%nspin
-    n_mat = dc%nstate_frag * dc%n_frag
     
     call init_lcfo
     
@@ -75,6 +77,12 @@ if(dc%id_tot==0) then!!!!!!!!! test_dcdft
     write(777,*) i,esp_tot(i,1)
   end do
 end if!!!!!!!!! test_dcdft
+
+    deallocate(f_basis)
+    do i=1,n_halo
+      deallocate(halo(i)%mat_H_local)
+    end do
+    deallocate(mat_H,mat_V,esp_tot)
     
   contains
   
@@ -112,14 +120,13 @@ end if!!!!!!!!! test_dcdft
           ir2(1:3) = dc%ixyz_frag(1:3,dc%i_frag) + halo(i)%dvec(1:3)*dc%nxyz_domain(1:3) ! neighbor fragment
           d(1:3) = mod( ir1(1:3) - ir2(1:3) , dc%lg_tot%num(1:3) )
           if(d(1)==0 .and. d(2)==0 .and. d(3)==0 .and. halo(i)%id_dst < 0) then
-            halo(i)%id_dst = id_array(ifrag)
-            halo(i)%ifrag_dst = ifrag
+            halo(i)%id_dst = id_array(ifrag) ! process ID of the communication destination
           end if
         ! src neighbor (-)
           ir2(1:3) = dc%ixyz_frag(1:3,dc%i_frag) - halo(i)%dvec(1:3)*dc%nxyz_domain(1:3) ! neighbor fragment
           d(1:3) = mod( ir1(1:3) - ir2(1:3) , dc%lg_tot%num(1:3) )
           if(d(1)==0 .and. d(2)==0 .and. d(3)==0 .and. halo(i)%id_src < 0) then
-            halo(i)%id_src = id_array(ifrag)
+            halo(i)%id_src = id_array(ifrag) ! process ID of the communication source
             halo(i)%ifrag_src = ifrag
           end if
         end do ! ifrag
@@ -127,7 +134,7 @@ end if!!!!!!!!! test_dcdft
       end do
       end do
       end do
-      n_halo = i
+      n_halo = i ! # of the halo regions (neighbor fragments)
       
       do i=1,n_halo
         do n=1,3 ! x,y,z
@@ -160,7 +167,7 @@ end if!!!!!!!!! test_dcdft
       allocate(f_basis  (dc%nxyz_domain(1),dc%nxyz_domain(2),dc%nxyz_domain(3),nspin,dc%nstate_frag))
       allocate(wrk_array(dc%nxyz_domain(1),dc%nxyz_domain(2),dc%nxyz_domain(3),nspin,dc%nstate_frag))
       
-    ! f_basis <-- | \bar{\phi} >
+    ! f_basis <-- | \bar{\phi} > (projected fragment orbitals)
       wrk_array = 0d0
       do io=info%io_s,info%io_e
       do ispin=1,nspin
@@ -168,7 +175,7 @@ end if!!!!!!!!! test_dcdft
       do iy=mg%is(2),mg%ie(2)
       do ix=mg%is(1),mg%ie(1)
         if( ix <= dc%nxyz_domain(1) .and. iy <= dc%nxyz_domain(2) .and. iz <= dc%nxyz_domain(3) &
-        & .and. energy%esp(io,1,ispin) - system%mu < energy_cut ) then
+        & .and. energy%esp(io,1,ispin) - system%mu < energy_cut ) then ! energy cutoff
           wrk_array(ix,iy,iz,ispin,io) = spsi%rwf(ix,iy,iz,ispin,io,1,1) ! | \phi > @ core domain
         end if
       end do
@@ -198,7 +205,7 @@ end if!!!!!!!!! test_dcdft
       do ispin=1,nspin
         i = 0 ! count # of basis functions
         do io=dc%nstate_frag,1,-1
-          if(lambda(io,ispin) > lambda_cut) then
+          if( lambda(io,ispin) > lambda_cut ) then ! cutoff for the eigenvalues of the overlap matrix
             i = i + 1 ! count # of basis functions
             do jo=1,dc%nstate_frag
               f_basis(:,:,:,ispin,i) = f_basis(:,:,:,ispin,i) &
@@ -371,7 +378,7 @@ end do
 end do
 end if !!!!!!!!! test_lcfo
       
-    ! hat_H <-- Hamiltonian matrix < lambda | H | lambda >
+    ! mat_H <-- total Hamiltonian matrix < lambda | H | lambda >
       nmax = maxval(n_mat)
       allocate(mat_H(nmax,nmax,nspin),mat_V(nmax,nmax,nspin),esp_tot(nmax,nspin))
       mat_V = 0d0
@@ -379,19 +386,19 @@ end if !!!!!!!!! test_lcfo
         ifrag = dc%i_frag
         l = dc%nxyz_domain
         do ispin=1,nspin
-        ! diagonal block
+        ! diagonal block < lambda_{ifrag,io} | H | lambda_{ifrag,jo} >
           do io=1,n_basis(ifrag,ispin) ; i = index_basis(io,ifrag,ispin)
           do jo=1,n_basis(ifrag,ispin) ; j = index_basis(jo,ifrag,ispin)
             mat_V(i,j,ispin) = mat_V(i,j,ispin) &
             & + sum(f_basis(1:l(1),1:l(2),1:l(3),ispin,io)*hf(1:l(1),1:l(2),1:l(3),ispin,jo)) * hvol
           end do
           end do
-        ! off-diagonal block
+        ! off-diagonal block < lambda_{jfrag,jo} | H | lambda_{ifrag,io} >
           do i_halo=1,n_halo ; jfrag = halo(i_halo)%ifrag_src ! src fragment (recv)
             do jo=1,n_basis(jfrag,ispin) ; j = index_basis(jo,jfrag,ispin)
             do io=1,n_basis(ifrag,ispin) ; i = index_basis(io,ifrag,ispin)
             ! mat_H_local(jo,io) == < lambda_{jfrag,jo} | H | lambda_{ifrag,io} >
-              wrk = 0.5d0* halo(i_halo)%mat_H_local(jo,io,ispin)
+              wrk = 0.5d0* halo(i_halo)%mat_H_local(jo,io,ispin) ! 0.5d0* : for double counting
               mat_V(j,i,ispin) = mat_V(j,i,ispin) + wrk
               mat_V(i,j,ispin) = mat_V(i,j,ispin) + wrk
             end do
