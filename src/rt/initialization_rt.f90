@@ -60,6 +60,7 @@ subroutine initialization_rt( Mit, system, energy, ewald, rt, md, &
   use gram_schmidt_orth, only: gram_schmidt
   use jellium, only: make_rho_jm
   use filesystem, only: open_filehandle
+  use lcfo, only: restart_rt_from_data_dcdft
   implicit none
   integer,parameter :: Nd = 4
 
@@ -241,7 +242,12 @@ subroutine initialization_rt( Mit, system, energy, ewald, rt, md, &
   
   call timer_begin(LOG_RESTART_SYNC)
   call timer_begin(LOG_RESTART_SELF)
-  call restart_rt(lg,mg,system,info,spsi_in,Mit,rt,Vh_stock1=Vh_stock1,Vh_stock2=Vh_stock2)
+  if(yn_dc=='n') then
+    call restart_rt(lg,mg,system,info,spsi_in,Mit,rt,Vh_stock1=Vh_stock1,Vh_stock2=Vh_stock2)
+  else
+  ! TDDFT & yn_dc==y : conventional TDDFT but wavefunctions are reconstructed from DC-LCFO data
+    call restart_rt_from_data_dcdft(lg,mg,system,info,spsi_in)
+  end if
   if(yn_reset_step_restart=='y' ) Mit=0
   call timer_end(LOG_RESTART_SELF)
   call comm_sync_all

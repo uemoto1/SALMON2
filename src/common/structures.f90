@@ -492,8 +492,6 @@ module structures
     integer :: icomm_frag, id_frag, isize_frag ! MPI communicator, process ID, & # of processes
     integer :: nstate_frag  ! nstate for the fragment
     integer,allocatable :: jxyz_tot(:,:)  ! r-grid (fragment) --> r-grid (total)
-  ! DC-LCFO
-    
   end type s_dcdft
 
 ! +----------------------------------+

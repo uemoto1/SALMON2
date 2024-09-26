@@ -492,7 +492,7 @@ contains
        nprocs_per_node = info%isize_rko *nx_m*ny_m*nz_m / product(tofu_shape(1:tofu_dim))
       if (mod(info%isize_rko*nx_m*ny_m*nz_m, product(tofu_shape(1:tofu_dim))) /= 0) &
           stop 'logical error (ms): calcluate # of process/node'
-    else if(yn_dc=='y') then
+    else if(yn_dc=='y' .and. theory=='dft') then
       nprocs_per_node = info%isize_rko * product(num_fragment) / product(tofu_shape(1:tofu_dim))
       if (mod(info%isize_rko*product(num_fragment), product(tofu_shape(1:tofu_dim))) /= 0) &
           stop 'logical error (dc): calcluate # of process/node'

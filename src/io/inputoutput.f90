@@ -2875,7 +2875,6 @@ contains
     end if
     
     if(yn_dc=='y') then
-      if(theory/='dft') stop "DC method (yn_dc=y): theory=dft must be specified."
       if(iflag_atom_coor/=ntype_atom_coor_cartesian) stop "DC method (yn_dc=y): use cartesian coordinate."
       !if(temperature < 0d0) stop "DC method (yn_dc=y): temperature must be specified."
       if(num_fragment(1)*num_fragment(2)*num_fragment(3) == 0) &

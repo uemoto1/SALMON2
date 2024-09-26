@@ -19,6 +19,15 @@
 
 module lcfo
   implicit none
+  
+  private
+  public :: dc_lcfo, restart_rt_from_data_dcdft
+  
+  character(32),parameter :: binfile_wf = "wavefunctions.bin", &
+  &                          binfile_rg = "rgrid_index.bin", &
+  &                          binfile_bf = "basis_functions.bin", &
+  &                          binfile_hl = "hamiltonian_local.bin"
+  
 contains
 
   subroutine dc_lcfo(lg,mg,system,info,stencil,ppg,energy,v_local,spsi,shpsi,sttpsi,srg,dc)
@@ -71,16 +80,11 @@ integer :: nnn !!!!!!!!! test_lcfo
       &               ,mat_V(1:n_mat(ispin),1:n_mat(ispin),ispin))
     end do
   
-
-if(dc%id_tot==0) then!!!!!!!!! test_dcdft
-  do i=1,n_mat(1)
-    write(777,*) i,esp_tot(i,1)
-  end do
-end if!!!!!!!!! test_dcdft
+    call output
 
     deallocate(f_basis)
     do i=1,n_halo
-      deallocate(halo(i)%mat_H_local)
+      if(allocated(halo(i)%mat_H_local)) deallocate(halo(i)%mat_H_local)
     end do
     deallocate(mat_H,mat_V,esp_tot)
     
@@ -410,7 +414,211 @@ end if !!!!!!!!! test_lcfo
       deallocate(hf)
       
     end subroutine calc_hamiltonian_matrix
+    
+    subroutine output
+      use salmon_global, only: base_directory, sysname, unit_energy
+      use filesystem, only: get_filehandle
+      use inputoutput, only: uenergy_from_au
+      implicit none
+      integer :: iunit,i_halo
+      character(256) :: filename
+      
+    ! total system data
+      if(dc%id_tot==0) then
+      ! eigen.data
+        iunit = get_filehandle()
+        filename = trim(dc%base_directory)//trim(sysname)//"_eigen.data" ! @ ./data_dcdft/total/
+        open(iunit,file=filename)
+        write(iunit,'("#esp: single-particle energies (eigen energies) calculated by DC-LCFO method")')
+        write(iunit,'("#io: orbital index")')
+        select case(unit_energy)
+        case('au','a.u.')
+          write(iunit,'("# 1:io, 2:esp[a.u.]")')
+        case('ev','eV')
+          write(iunit,'("# 1:io, 2:esp[eV]")')
+        end select
+        do ispin=1,nspin
+          write(iunit,'("# spin=",1x,i5)') ispin
+          do i=1,n_mat(ispin)
+            write(iunit,'(1x,i5,e26.16e3)') i,esp_tot(i,ispin)*uenergy_from_au
+          end do
+        end do
+        close(iunit)
+      ! coefficients of the wavefunctions
+        iunit = get_filehandle()
+        filename = trim(dc%base_directory)//binfile_wf ! @ ./data_dcdft/total/
+        open(iunit,file=filename,form='unformatted',access='stream')
+        write(iunit) dc%n_frag, nspin, dc%nstate_frag
+        write(iunit) n_mat(1:nspin)
+        write(iunit) n_basis(1:dc%n_frag,1:nspin)
+        write(iunit) index_basis(1:dc%nstate_frag,1:dc%n_frag,1:nspin)
+        do ispin=1,nspin
+          write(iunit) mat_V(1:n_mat(ispin),1:n_mat(ispin),ispin)
+        end do
+        close(iunit)
+      end if
+      
+    ! fragment data
+      if(dc%id_frag==0) then
+      ! r-grid index
+        iunit = get_filehandle()
+        filename = trim(base_directory)//binfile_rg ! base_directory==./data_dcdft/fragments/dc%i_frag/
+        open(iunit,file=filename,form='unformatted',access='stream')
+        write(iunit) lg%num(1:3), dc%lg_tot%num(1:3)
+        do n=1,3 ! x,y,z
+          write(iunit) dc%jxyz_tot(1:lg%num(n),n)
+        end do
+        close(iunit)
+      ! basis functions | lambda >
+        iunit = get_filehandle()
+        filename = trim(base_directory)//binfile_bf ! base_directory==./data_dcdft/fragments/dc%i_frag/
+        open(iunit,file=filename,form='unformatted',access='stream')
+        write(iunit) dc%nxyz_domain(1:3),nspin,dc%nstate_frag
+        write(iunit) n_basis(dc%i_frag,1:nspin) ! # of basis functions
+        write(iunit) f_basis(1:dc%nxyz_domain(1),1:dc%nxyz_domain(2),1:dc%nxyz_domain(3) &
+        & ,1:nspin,1:dc%nstate_frag) ! basis functions | lambda >
+        close(iunit)
+      ! local hamiltonian matrix
+        iunit = get_filehandle()
+        filename = trim(base_directory)//binfile_hl
+        open(iunit,file=filename,form='unformatted',access='stream')
+        write(iunit) n_halo
+        do i_halo=1,n_halo
+          write(iunit) halo(i_halo)%mat_H_local(1:dc%nstate_frag,1:dc%nstate_frag,1:nspin)
+        end do
+        close(iunit)
+      end if
+      
+    end subroutine output
   
   end subroutine dc_lcfo
+
+!===================================================================================================================================
+
+! TDDFT & yn_dc==y : conventional TDDFT but wavefunctions are reconstructed from DC-LCFO data
+  subroutine restart_rt_from_data_dcdft(lg,mg,system,info,spsi)
+    use communication, only: comm_is_root, comm_summation, comm_bcast
+    use filesystem, only: get_filehandle
+    use salmon_global,only: num_fragment
+    use structures
+    implicit none
+    type(s_rgrid),        intent(in) :: lg,mg
+    type(s_dft_system),   intent(in) :: system
+    type(s_parallel_info),intent(in) :: info
+    type(s_orbital)                  :: spsi
+    !
+    character(32),parameter :: bdir_tot='./data_dcdft/total/',bdir_frag='./data_dcdft/fragments/'
+    character(256) :: filename
+    integer :: iunit, n_frag, nspin, nstate_frag, nmax
+    integer :: i,j,jfrag,ispin,io,jo,ix,iy,iz,ix_tot,iy_tot,iz_tot,n
+    integer,dimension(3) :: lgnum_frag,lgnum_tmp,nxyz_domain
+    !
+    integer,allocatable :: n_mat(:),n_basis(:,:),index_basis(:,:,:),jxyz_tot(:,:)
+    real(8),allocatable :: f_basis(:,:,:,:,:),mat_V(:,:,:),wrk1(:,:,:),wrk2(:,:,:)
+    
+  ! read coefficients of the wavefunctions ./data_dcdft/total/wavefunctions.bin
+    allocate(n_mat(system%nspin))
+    if(comm_is_root(info%id_rko)) then
+      write(*,*) "TDDFT & yn_dc==y : conventional TDDFT but wavefunctions are reconstructed from DC-LCFO data"
+      write(*,*) "read from ./data_dcdft directory"
+      iunit = get_filehandle()
+      filename = trim(bdir_tot)//binfile_wf ! @ ./data_dcdft/total/
+      open(iunit,file=filename,form='unformatted',access='stream')
+      read(iunit) n_frag, nspin, nstate_frag
+      if( n_frag /= product(num_fragment) .or. nspin /= system%nspin ) stop "data_dcdft: input mismatch"
+      read(iunit) n_mat(1:nspin)
+    end if
+    nspin = system%nspin
+    call comm_bcast(n_frag,info%icomm_rko)
+    call comm_bcast(nstate_frag,info%icomm_rko)
+    call comm_bcast(n_mat,info%icomm_rko)
+    allocate(n_basis(n_frag,nspin))
+    allocate(index_basis(nstate_frag,n_frag,nspin))
+    nmax = maxval(n_mat)
+    allocate(mat_V(nmax,nmax,nspin))
+    if(comm_is_root(info%id_rko)) then
+      read(iunit) n_basis(1:n_frag,1:nspin)
+      read(iunit) index_basis(1:nstate_frag,1:n_frag,1:nspin)
+      do ispin=1,nspin
+        read(iunit) mat_V(1:n_mat(ispin),1:n_mat(ispin),ispin)
+      end do
+      close(iunit)
+    end if
+    call comm_bcast(n_basis,info%icomm_rko)
+    do ispin=1,nspin
+      call comm_bcast(index_basis(1:nstate_frag,1:n_frag,ispin),info%icomm_rko)
+    end do
+    call comm_bcast(mat_V,info%icomm_rko)
+    
+  ! read fragment basis functions ./data_dcdft/fragments/*/basis_functions.bin
+    if(info%isize_rko < n_frag) stop "yn_dc=y: MPI size is too small."
+    n = info%isize_rko / n_frag
+    jfrag = -1
+    do j=1,n_frag
+      if( j*n == (info%id_rko+1) ) then
+        jfrag = j
+        exit
+      end if
+    end do
+    if(jfrag > 0) then ! myrank (info%id_rko) <--> jfrag
+    ! r-grid index
+      iunit = get_filehandle()
+      write(filename, '(a, i6.6, a, a)') trim(bdir_frag), jfrag, '/', binfile_rg
+      open(iunit,file=filename,form='unformatted',access='stream')
+      read(iunit) lgnum_frag(1:3), lgnum_tmp(1:3)
+      if( any( lgnum_tmp /= lg%num ) ) stop "data_dcdft: input mismatch (lg)"
+      allocate(jxyz_tot(maxval(lgnum_frag),3))
+      do n=1,3 ! x,y,z
+        read(iunit) jxyz_tot(1:lgnum_frag(n),n)
+      end do
+      close(iunit)
+    ! basis functions | lambda >
+      iunit = get_filehandle()
+      write(filename, '(a, i6.6, a, a)') trim(bdir_frag), jfrag, '/', binfile_bf
+      open(iunit,file=filename,form='unformatted',access='stream')
+      read(iunit) nxyz_domain(1:3),i,j ! i,j: dummy
+      read(iunit) lgnum_tmp(1:nspin) ! dummy
+      if(i /= nspin .or. j /= nstate_frag .or. any( lgnum_tmp(1:nspin) /= n_basis(jfrag,1:nspin) ) ) then
+        stop "data_dcdft: input mismatch (basis_functions.bin)"
+      end if
+      allocate(f_basis(1:nxyz_domain(1),1:nxyz_domain(2),1:nxyz_domain(3),1:nspin,1:nstate_frag))
+      read(iunit) f_basis(1:nxyz_domain(1),1:nxyz_domain(2),1:nxyz_domain(3),1:nspin,1:nstate_frag)
+      close(iunit)
+    end if
+    
+  ! r-grid wavefunctions
+    allocate(wrk1(lg%num(1),lg%num(2),lg%num(3)))
+    allocate(wrk2(lg%num(1),lg%num(2),lg%num(3)))
+    do ispin=1,nspin
+    do io=1,system%no
+      wrk1 = 0d0
+      if(jfrag > 0) then ! myrank (info%id_rko) <--> jfrag
+        do jo=1,n_basis(jfrag,ispin) ; j = index_basis(jo,jfrag,ispin)
+        do iz=1,nxyz_domain(3); iz_tot = jxyz_tot(iz,3)
+        do iy=1,nxyz_domain(2); iy_tot = jxyz_tot(iy,2)
+        do ix=1,nxyz_domain(1); ix_tot = jxyz_tot(ix,1)
+          wrk1(ix_tot,iy_tot,iz_tot) = wrk1(ix_tot,iy_tot,iz_tot) &
+          & + f_basis(ix,iy,iz,ispin,jo) * mat_V(j,io,ispin)
+        end do
+        end do
+        end do
+        end do
+      end if
+      call comm_summation(wrk1,wrk2,product(lg%num(1:3)),info%icomm_rko)
+      if(info%io_s <= io .and. io <= info%io_e) then
+        do iz=mg%is(3),mg%ie(3)
+        do iy=mg%is(2),mg%ie(2)
+        do ix=mg%is(1),mg%ie(1)
+          spsi%zwf(ix,iy,iz,ispin,io,1,1) = wrk2(ix,iy,iz)
+        end do
+        end do
+        end do        
+      end if
+    end do
+    end do
+    
+    deallocate(n_mat,n_basis,index_basis,mat_V,wrk1,wrk2)
+  end subroutine restart_rt_from_data_dcdft
+  
 
 end module lcfo
