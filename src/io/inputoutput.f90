@@ -589,7 +589,7 @@ contains
       
     namelist/dc/ &
       & num_fragment, &
-      & length_buffer, &
+      & num_rgrid_buffer, &
       & nproc_rgrid_tot, &
       & energy_cut, &
       & lambda_cut
@@ -1003,7 +1003,7 @@ contains
     al_vec3_sbe(:,:) = 0.d0
 !! == default for &dc
     num_fragment = 0
-    length_buffer = 0d0
+    num_rgrid_buffer = 0
     nproc_rgrid_tot = 1
     energy_cut = 0d0
     lambda_cut = 1d-3
@@ -1620,8 +1620,7 @@ contains
     al_vec3_sbe = al_vec3_sbe * ulength_to_au
 !! == bcast for dc
     call comm_bcast(num_fragment ,nproc_group_global)
-    call comm_bcast(length_buffer, nproc_group_global)
-    length_buffer = length_buffer * ulength_to_au
+    call comm_bcast(num_rgrid_buffer, nproc_group_global)
     call comm_bcast(nproc_rgrid_tot, nproc_group_global)
     call comm_bcast(energy_cut, nproc_group_global)
     energy_cut = energy_cut * uenergy_to_au
@@ -2574,7 +2573,7 @@ contains
       if(inml_dc >0)ierr_nml = ierr_nml +1
       write(fh_variables_log, '("#namelist: ",A,", status=",I3)') 'dc', inml_dc
       write(fh_variables_log, '("#",4X,A,"=",3I4)') 'num_fragment',num_fragment(1:3)
-      write(fh_variables_log, '("#",4X,A,"=",3ES12.5)') "length_buffer", length_buffer(1:3)
+      write(fh_variables_log, '("#",4X,A,"=",3I4)') "num_rgrid_buffer", num_rgrid_buffer(1:3)
       write(fh_variables_log, '("#",4X,A,"=",3I4)') "nproc_rgrid_tot",nproc_rgrid_tot(1:3)
       write(fh_variables_log, '("#",4X,A,"=",ES12.5)') 'energy_cut', energy_cut
       write(fh_variables_log, '("#",4X,A,"=",ES12.5)') 'lambda_cut', lambda_cut

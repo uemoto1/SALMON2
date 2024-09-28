@@ -156,14 +156,14 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     end subroutine init_comm_frag
     
     subroutine init_fragment
-      use salmon_global, only: length_buffer, kion, rion, natom, num_rgrid, al, num_fragment
+      use salmon_global, only: num_rgrid_buffer, kion, rion, natom, num_rgrid, al, num_fragment
       implicit none
       integer :: i_frag,n,i,j,k,ii,jj,kk
       integer :: iatom,iatom_frag
       integer :: kion_frag(natom,dc%n_frag),natom_frag(dc%n_frag)
-      real(8) :: dr,bn,wrk
+      real(8) :: dr
       real(8) :: r1(3),r2(3),r(3)
-      real(8) :: ldomain(3)
+      real(8) :: ldomain(3),lbuffer(3)
       real(8) :: rion_frag(3,natom,dc%n_frag)
     
     ! length of domain
@@ -179,11 +179,9 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
       ! dc%nxyz_buffer: # of grid points for the buffer region
         if(mod(num_rgrid(n),num_fragment(n))==0) then
           dc%nxyz_domain(n) = num_rgrid(n) / num_fragment(n)
+          dc%nxyz_buffer(n) = num_rgrid_buffer(n)
           dr = al(n)/dble(num_rgrid(n))
-          bn = length_buffer(n)/dr
-          wrk = abs(bn-dble(nint(bn)))
-          if(wrk > 1d-15) stop "DC method (yn_dc=y): grid mismatch of length_buffer"
-          dc%nxyz_buffer(n) = nint(bn)
+          lbuffer(n) = dr * dc%nxyz_buffer(n) ! length of the buffer region
         else
           stop "DC method (yn_dc=y): mod(num_rgrid,num_fragment) /= 0"
         end if
@@ -213,8 +211,8 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
       do j=1,num_fragment(2)
       do k=1,num_fragment(3)
       ! boundaries of the fragment i_frag
-        r1 = dc%rxyz_frag(:,i_frag) - length_buffer
-        r2 = dc%rxyz_frag(:,i_frag) + ldomain + length_buffer
+        r1 = dc%rxyz_frag(:,i_frag) - lbuffer
+        r2 = dc%rxyz_frag(:,i_frag) + ldomain + lbuffer
       ! atom count
         iatom_frag = 0
         do iatom=1,natom
@@ -248,7 +246,7 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
       nelec = nelec * natom_frag(dc%i_frag) / natom !!!!!!!!! test_dcdft !!!!!!!!
     
     ! al, num_rgrid (total system) --> al, num_rgrid (fragment)
-      al = ldomain + 2d0*length_buffer
+      al = ldomain + 2d0*lbuffer
       num_rgrid = dc%nxyz_domain + 2*dc%nxyz_buffer
       
     ! natom, rion, kion (total system) --> natom, rion, kion (fragment)
