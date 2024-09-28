@@ -220,6 +220,21 @@ integer :: nnn !!!!!!!!! test_lcfo
         nb(ispin) = i ! # of basis functions
       end do ! ispin
       
+    ! Gram–Schmidt orthonormalization
+      wrk_array = f_basis
+      do ispin=1,nspin
+        do io=1,nb(ispin)
+          do jo=1,io-1
+            wrk_array(:,:,:,ispin,io) = wrk_array(:,:,:,ispin,io) &
+            & - f_basis(:,:,:,ispin,jo) * sum(f_basis(:,:,:,ispin,jo)*wrk_array(:,:,:,ispin,io)) &
+            & / sum(f_basis(:,:,:,ispin,jo)*f_basis(:,:,:,ispin,jo))
+          end do
+          wrk_array(:,:,:,ispin,io) = wrk_array(:,:,:,ispin,io) &
+          & / sqrt( sum(wrk_array(:,:,:,ispin,io)*wrk_array(:,:,:,ispin,io)) * hvol )
+        end do
+      end do ! ispin
+      f_basis = wrk_array
+      
     ! sttpsi <-- f_basis == | lambda > (basis functions)
       sttpsi%rwf = 0d0
       do io=info%io_s,info%io_e
