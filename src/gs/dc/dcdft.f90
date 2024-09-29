@@ -57,8 +57,9 @@ contains
       use mixing_sub, only: init_mixing
       use salmon_pp, only: read_pslfile
       use prep_pp_sub, only: init_ps
-      use salmon_global, only: num_fragment, nelec, base_directory
+      use salmon_global, only: num_fragment, nelec, base_directory, method_init_density
       use filesystem, only: atomic_create_directory
+      use read_gs, only: read_dns_cube
       implicit none
       integer :: i
       type(s_pp_grid) :: ppg_tmp
@@ -104,6 +105,11 @@ contains
       call read_pslfile(dc%system_tot,pp)
       call init_ps(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%fg_tot,dc%poisson_tot, &
       & pp,ppg_tmp,dc%vpsl_tot)
+      
+      if(method_init_density=='read_dns_cube') then
+      ! read the initial density for the total system
+        call read_dns_cube(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%rho_tot,dc%rho_tot_s)
+      end if
     
     end subroutine init_total
   
