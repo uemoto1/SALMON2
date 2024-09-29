@@ -67,20 +67,32 @@ integer :: nnn !!!!!!!!! test_lcfo
     hvol = system%hvol
     nspin = system%nspin
     
+    if(dc%id_tot==0) write(*,*) "start DC-LCFO"
+    
     call init_lcfo
     
     call calc_basis
     
     call hpsi_basis
     
+    if(dc%id_tot==0) write(*,*) "basis functions operation: done"
+    
     call calc_hamiltonian_matrix
+    
+    if(dc%id_tot==0) write(*,*) "Hamiltonian matrix: done"
     
     do ispin=1,nspin
       call eigen_dsyev(mat_H(1:n_mat(ispin),1:n_mat(ispin),ispin),esp_tot(1:n_mat(ispin),ispin) &
       &               ,mat_V(1:n_mat(ispin),1:n_mat(ispin),ispin))
     end do
+    
+    if(dc%id_tot==0) write(*,*) "diagonalization: done"
   
     call output
+    
+    call test_write_psi !!!!!!!!! test_lcfo
+    
+    if(dc%id_tot==0) write(*,*) "end DC-LCFO"
 
     deallocate(f_basis)
     do i=1,n_halo
@@ -340,7 +352,9 @@ end if !!!!!!!!! test_lcfo
           end do
           end do
           end do
+          
 write(*,*) "test_lcfo: sendrecv",i_halo,dc%i_frag,dc%id_tot,halo(i_halo)%id_dst,halo(i_halo)%id_src !!!!!!!!! test_lcfo
+
         ! MPI_ISEND
           itag_send = dc%i_frag
           ireq_send(i_halo) = comm_isend(halo(i_halo)%buf_send,halo(i_halo)%id_dst,itag_send,dc%icomm_tot)
@@ -505,6 +519,59 @@ end if !!!!!!!!! test_lcfo
       end if
       
     end subroutine output
+    
+!+++++++++++++++++
+    subroutine test_write_psi !!!!!!!!! test_lcfo
+      use salmon_global, only: natom, kion, rion, base_directory
+      use write_file3d
+      implicit none
+      character(60) :: suffix='./psi_test1025'
+      character(30) :: phys_quantity='psi'
+      real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3)) :: wrk1,wrk2
+      integer :: ix_tot,iy_tot,iz_tot
+      character(256) :: dir_tmp
+      
+      if(n_mat(1) < 1025) return
+
+      wrk1 = 0d0
+      if(dc%id_frag==0) then
+        ispin = 1
+        io = 1025
+        jfrag = dc%i_frag
+        do jo=1,n_basis(jfrag,ispin) ; j = index_basis(jo,jfrag,ispin)
+        do iz=1,dc%nxyz_domain(3); iz_tot = dc%jxyz_tot(iz,3)
+        do iy=1,dc%nxyz_domain(2); iy_tot = dc%jxyz_tot(iy,2)
+        do ix=1,dc%nxyz_domain(1); ix_tot = dc%jxyz_tot(ix,1)
+          wrk1(ix_tot,iy_tot,iz_tot) = wrk1(ix_tot,iy_tot,iz_tot) &
+          & + f_basis(ix,iy,iz,ispin,jo) * mat_V(j,io,ispin)
+        end do
+        end do
+        end do
+        end do
+      end if
+      call comm_summation(wrk1,wrk2,product(dc%lg_tot%num(1:3)),dc%icomm_tot)
+        
+    ! override (fragment --> total)
+      natom = dc%system_tot%nion
+      deallocate(kion,rion)
+      allocate(kion(natom),rion(3,natom))
+      kion = dc%system_tot%kion
+      rion = dc%system_tot%rion
+      dir_tmp = base_directory
+      base_directory = dc%base_directory
+
+      call write_cube(dc%lg_tot,103,suffix,phys_quantity,wrk2,dc%system_tot)
+    
+    ! override (total --> fragment)
+      natom = system%nion
+      deallocate(kion,rion)
+      allocate(kion(natom),rion(3,natom))
+      kion = system%kion
+      rion = system%rion
+      base_directory = dir_tmp
+
+    end subroutine test_write_psi !!!!!!!!! test_lcfo
+!++++++++++++++++
   
   end subroutine dc_lcfo
 
@@ -624,7 +691,7 @@ end if !!!!!!!!! test_lcfo
         do iz=mg%is(3),mg%ie(3)
         do iy=mg%is(2),mg%ie(2)
         do ix=mg%is(1),mg%ie(1)
-          spsi%zwf(ix,iy,iz,ispin,io,1,1) = wrk2(ix,iy,iz)
+          spsi%zwf(ix,iy,iz,ispin,io,1,1) = dcmplx(wrk2(ix,iy,iz))
         end do
         end do
         end do        
