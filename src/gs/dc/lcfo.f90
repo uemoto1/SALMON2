@@ -58,11 +58,9 @@ contains
     integer :: index_basis(dc%nstate_frag,dc%n_frag,system%nspin)
     real(8) :: hvol
     real(8),allocatable :: f_basis(:,:,:,:,:),hf(:,:,:,:,:),wrk_array(:,:,:,:,:), &
-    & mat_H(:,:,:),mat_V(:,:,:),esp_tot(:,:)
+    & mat_H(:,:,:),mat_V(:,:,:),esp_tot(:,:),mat_H_local(:,:,:)
     !
     integer :: i,j,n,ix,iy,iz,io,jo,ispin,ifrag,jfrag
-
-integer :: nnn !!!!!!!!! test_lcfo
     
     hvol = system%hvol
     nspin = system%nspin
@@ -98,7 +96,7 @@ integer :: nnn !!!!!!!!! test_lcfo
     do i=1,n_halo
       if(allocated(halo(i)%mat_H_local)) deallocate(halo(i)%mat_H_local)
     end do
-    deallocate(mat_H,mat_V,esp_tot)
+    deallocate(mat_H,mat_V,esp_tot,mat_H_local)
     
   contains
   
@@ -278,24 +276,6 @@ integer :: nnn !!!!!!!!! test_lcfo
         end do
         n_mat(ispin) = i ! n_mat: dimension of the total matrix
       end do
-
-if(dc%id_frag==0) then !!!!!!!!! test_lcfo
-write(*,*) "test_lcfo n_basis", nb
-nnn=4000
-nnn=nnn+dc%i_frag
-write(nnn,*) "# lambda"
-do io=dc%nstate_frag,1,-1
-  write(nnn,*) lambda(io,1)
-end do
-nnn=1000
-nnn=nnn+dc%i_frag
-write(nnn,*) "# i, j, < lambda_i | lambda_j >"
-do io=1,dc%nstate_frag
-do jo=1,dc%nstate_frag
-  write(nnn,*) io,jo, sum(f_basis(:,:,:,1,io)*f_basis(:,:,:,1,jo)) * hvol
-end do
-end do
-end if !!!!!!!!! test_lcfo
       
       deallocate(wrk_array)
       
@@ -337,7 +317,20 @@ end if !!!!!!!!! test_lcfo
       integer :: itag_send,itag_recv
       integer,dimension(n_halo) :: ireq_send,ireq_recv
       real(8) :: wrk
+      
+    ! diagonal block < lambda_{ifrag,io} | H | lambda_{ifrag,jo} >
+      allocate(mat_H_local(dc%nstate_frag,dc%nstate_frag,nspin))
+      l = dc%nxyz_domain
+      do ispin=1,nspin
+      do io=1,n_basis(dc%i_frag,ispin)
+      do jo=1,n_basis(dc%i_frag,ispin)
+        mat_H_local(io,jo,ispin) = &
+        & + sum(f_basis(1:l(1),1:l(2),1:l(3),ispin,io)*hf(1:l(1),1:l(2),1:l(3),ispin,jo)) * hvol
+      end do
+      end do
+      end do
             
+    ! off-diagonal block < lambda_{jfrag,jo} | H | lambda_{ifrag,io} >
       if(dc%id_frag==0) then
       ! halo communication for f_basis == | lambda >
         do i_halo=1,n_halo
@@ -352,8 +345,6 @@ end if !!!!!!!!! test_lcfo
           end do
           end do
           end do
-          
-write(*,*) "test_lcfo: sendrecv",i_halo,dc%i_frag,dc%id_tot,halo(i_halo)%id_dst,halo(i_halo)%id_src !!!!!!!!! test_lcfo
 
         ! MPI_ISEND
           itag_send = dc%i_frag
@@ -368,7 +359,7 @@ write(*,*) "test_lcfo: sendrecv",i_halo,dc%i_frag,dc%id_tot,halo(i_halo)%id_dst,
         do i_halo=1,n_halo
           l = halo(i_halo)%length
           d = halo(i_halo)%dsp_recv
-          allocate(halo(i_halo)%mat_H_local(dc%nstate_frag,dc%nstate_frag,system%nspin))
+          allocate(halo(i_halo)%mat_H_local(dc%nstate_frag,dc%nstate_frag,nspin))
           halo(i_halo)%mat_H_local = 0d0
           do ispin=1,nspin
           do io=1,dc%nstate_frag
@@ -385,31 +376,10 @@ write(*,*) "test_lcfo: sendrecv",i_halo,dc%i_frag,dc%id_tot,halo(i_halo)%id_dst,
           end do
           end do
           deallocate(halo(i_halo)%buf_send,halo(i_halo)%buf_recv)
+          if(dc%id_tot==0) write(*,*) "Halo communication #",i_halo,": done"
         end do
       end if ! dc%id_frag==0
-      
-if(dc%id_frag==0) then !!!!!!!!! test_lcfo
-nnn=2000
-nnn=nnn+dc%i_frag
-l = dc%nxyz_domain
-write(nnn,*) "# i,j,mat_H(i,j)"
-do io=1,dc%nstate_frag
-do jo=1,dc%nstate_frag
-  write(nnn,*) io,jo, sum(f_basis(1:l(1),1:l(2),1:l(3),1,io)*hf(1:l(1),1:l(2),1:l(3),1,jo)) * hvol
-end do
-end do
-nnn=3000
-nnn=nnn+dc%i_frag
-l = dc%nxyz_domain
-write(nnn,*) "# i_halo,i,j,mat_H(i,j) (inter-fragment)"
-do i_halo=1,n_halo
-do io=1,dc%nstate_frag
-do jo=1,dc%nstate_frag
-  write(nnn,*) i_halo,io,jo,halo(i_halo)%mat_H_local(io,jo,1)
-end do
-end do
-end do
-end if !!!!!!!!! test_lcfo
+      deallocate(hf)
       
     ! mat_H <-- total Hamiltonian matrix < lambda | H | lambda >
       nmax = maxval(n_mat)
@@ -417,13 +387,11 @@ end if !!!!!!!!! test_lcfo
       mat_V = 0d0
       if(dc%id_frag==0) then
         ifrag = dc%i_frag
-        l = dc%nxyz_domain
         do ispin=1,nspin
         ! diagonal block < lambda_{ifrag,io} | H | lambda_{ifrag,jo} >
           do io=1,n_basis(ifrag,ispin) ; i = index_basis(io,ifrag,ispin)
           do jo=1,n_basis(ifrag,ispin) ; j = index_basis(jo,ifrag,ispin)
-            mat_V(i,j,ispin) = mat_V(i,j,ispin) &
-            & + sum(f_basis(1:l(1),1:l(2),1:l(3),ispin,io)*hf(1:l(1),1:l(2),1:l(3),ispin,jo)) * hvol
+            mat_V(i,j,ispin) = mat_H_local(io,jo,ispin)
           end do
           end do
         ! off-diagonal block < lambda_{jfrag,jo} | H | lambda_{ifrag,io} >
@@ -440,7 +408,6 @@ end if !!!!!!!!! test_lcfo
         end do ! ispin=1,nspin
       end if ! dc%id_frag==0
       call comm_summation(mat_V,mat_H,nmax*nmax*nspin,dc%icomm_tot)
-      deallocate(hf)
       
     end subroutine calc_hamiltonian_matrix
     
@@ -511,6 +478,7 @@ end if !!!!!!!!! test_lcfo
         iunit = get_filehandle()
         filename = trim(base_directory)//binfile_hl
         open(iunit,file=filename,form='unformatted',access='stream')
+        write(iunit) mat_H_local(1:dc%nstate_frag,1:dc%nstate_frag,1:nspin)
         write(iunit) n_halo
         do i_halo=1,n_halo
           write(iunit) halo(i_halo)%mat_H_local(1:dc%nstate_frag,1:dc%nstate_frag,1:nspin)
