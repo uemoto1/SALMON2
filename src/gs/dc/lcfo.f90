@@ -17,6 +17,7 @@
 
 ! DC-LCFO method [Phys. Rev. B 95, 045106 (2017).]
 
+#include "config.h"
 module lcfo
   implicit none
   
@@ -79,10 +80,20 @@ contains
     
     if(dc%id_tot==0) write(*,*) "Hamiltonian matrix: done"
     
+#ifdef USE_EIGENEXA
     do ispin=1,nspin
+      if(dc%id_tot==0) write(*,*) "eigenexa diag, #dim=",n_mat(ispin)
+      call eigenexa_dsyev(n_mat(ispin),mat_H(1:n_mat(ispin),1:n_mat(ispin),ispin) &
+      &                  ,esp_tot(1:n_mat(ispin),ispin) &
+      &                  ,mat_V(1:n_mat(ispin),1:n_mat(ispin),ispin))
+    end do
+#else
+    do ispin=1,nspin
+      if(dc%id_tot==0) write(*,*) "lapack diag, #dim=",n_mat(ispin)
       call eigen_dsyev(mat_H(1:n_mat(ispin),1:n_mat(ispin),ispin),esp_tot(1:n_mat(ispin),ispin) &
       &               ,mat_V(1:n_mat(ispin),1:n_mat(ispin),ispin))
     end do
+#endif
     
     if(dc%id_tot==0) write(*,*) "diagonalization: done"
   
@@ -410,6 +421,54 @@ contains
       call comm_summation(mat_V,mat_H,nmax*nmax*nspin,dc%icomm_tot)
       
     end subroutine calc_hamiltonian_matrix
+    
+#ifdef USE_EIGENEXA
+    subroutine eigenexa_dsyev(n,h,e,v)
+      use eigen_libs_mod
+      implicit none
+      integer,intent(in) :: n
+      real(8),intent(in) :: h(n,n)
+      real(8)            :: e(n)
+      real(8)            :: v(n,n)
+      !
+      integer :: nx,ny,ix_s,ix_e,iy_s,iy_e,i_loc,j_loc
+      integer :: nnod,x_nnod,y_nnod,inod,x_inod,y_inod
+      real(8), allocatable :: h_div(:,:), v_div(:,:), v_tmp(:,:)
+      
+      call eigen_init(dc%icomm_tot)
+      
+      call eigen_get_matdims( n, nx, ny )
+      call eigen_get_procs( nnod, x_nnod, y_nnod )
+      call eigen_get_id   ( inod, x_inod, y_inod )
+      
+      allocate( h_div(nx,ny), &
+                v_div(nx,ny), &
+                v_tmp(n,n) )
+                
+      ix_s = eigen_loop_start( 1, x_nnod, x_inod )
+      ix_e = eigen_loop_end  ( n, x_nnod, x_inod )
+      iy_s = eigen_loop_start( 1, y_nnod, y_inod )
+      iy_e = eigen_loop_end  ( n, y_nnod, y_inod )
+      do j_loc=iy_s,iy_e ; j = eigen_translate_l2g(j_loc, y_nnod, y_inod)
+      do i_loc=ix_s,ix_e ; i = eigen_translate_l2g(i_loc, x_nnod, x_inod)
+        h_div(i_loc,j_loc) = h(i,j)
+      end do
+      end do
+      
+      call eigen_sx(n, n, h_div, nx, e, v_div, nx)
+      
+      v_tmp = 0d0
+      do j_loc=iy_s,iy_e ; j = eigen_translate_l2g(j_loc, y_nnod, y_inod)
+      do i_loc=ix_s,ix_e ; i = eigen_translate_l2g(i_loc, x_nnod, x_inod)
+        v_tmp(i,j) = v_div(i_loc,j_loc)
+      end do
+      end do
+      call comm_summation(v_tmp,v,n*n,dc%icomm_tot)
+      
+      deallocate(h_div,v_div,v_tmp)
+      call eigen_free( )
+    end subroutine eigenexa_dsyev
+#endif
     
     subroutine output
       use salmon_global, only: base_directory, sysname, unit_energy
