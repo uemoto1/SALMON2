@@ -363,7 +363,7 @@ subroutine initialization_dft_md( Miter, rion_update,  &
   type(s_poisson) :: poisson
   type(s_stencil) :: stencil
   type(s_xc_functional) :: xc_func
-  type(s_scalar) :: rho,rho_jm,Vh,Vpsl,rho_old,Vlocal_old
+  type(s_scalar) :: rho,rho_jm,Vh,Vpsl
   type(s_scalar) :: V_local(system%nspin),rho_s(system%nspin),Vxc(system%nspin)
   type(s_reciprocal_grid) :: fg
   type(s_pp_info) :: pp
@@ -381,21 +381,6 @@ subroutine initialization_dft_md( Miter, rion_update,  &
 
   call init_md(system,md)
 
-  if(allocated(rho_old%f))    deallocate(rho_old%f)
-  if(allocated(Vlocal_old%f)) deallocate(Vlocal_old%f)
-  call allocate_scalar(mg,rho_old)
-  call allocate_scalar(mg,Vlocal_old)
-
-!$OMP parallel do private(iz,iy,ix)
-  do iz=mg%is(3),mg%ie(3)
-  do iy=mg%is(2),mg%ie(2)
-  do ix=mg%is(1),mg%ie(1)
-     rho_old%f(ix,iy,iz)   = rho%f(ix,iy,iz)
-     Vlocal_old%f(ix,iy,iz)= V_local(1)%f(ix,iy,iz)
-  end do
-  end do
-  end do
-
   !-------------- SCF Iteration ----------------
   !Iteration loop for SCF (DFT_Iteration)
   Miter=0
@@ -411,7 +396,6 @@ subroutine initialization_dft_md( Miter, rion_update,  &
                           rho,rho_jm,rho_s,  &
                           V_local,Vh,Vxc,Vpsl,xc_func,  &
                           pp,ppg,ppn,  &
-                          rho_old,Vlocal_old,  &
                           band, 2 )
 
   call calc_force(system,pp,fg,info,mg,stencil,poisson,srg,ppg,spsi,ewald)

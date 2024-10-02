@@ -63,7 +63,7 @@ type(s_dft_system) :: system
 type(s_poisson) :: poisson
 type(s_stencil) :: stencil
 type(s_xc_functional) :: xc_func
-type(s_scalar) :: rho,rho_jm,Vh,Vpsl,rho_old,Vlocal_old
+type(s_scalar) :: rho,rho_jm,Vh,Vpsl
 type(s_scalar),allocatable :: V_local(:),rho_s(:),Vxc(:)
 type(s_reciprocal_grid) :: fg
 type(s_pp_info) :: pp
@@ -89,7 +89,7 @@ if(theory=='dft_band'.and.iperiodic/=3) return
 
 if(yn_dc=='y') then
   call init_dcdft(dc,pp,mixing)
-  ilevel_print = 2
+  ilevel_print = 0
 else
   ilevel_print = 3
 end if
@@ -173,21 +173,6 @@ end if
 
 call timer_begin(LOG_INIT_GS_ITERATION)
 
-if(allocated(rho_old%f))    deallocate(rho_old%f)
-if(allocated(Vlocal_old%f)) deallocate(Vlocal_old%f)
-call allocate_scalar(mg,rho_old)
-call allocate_scalar(mg,Vlocal_old)
-
-!$OMP parallel do private(iz,iy,ix)
-do iz=mg%is(3),mg%ie(3)
-do iy=mg%is(2),mg%ie(2)
-do ix=mg%is(1),mg%ie(1)
-   rho_old%f(ix,iy,iz)   = rho%f(ix,iy,iz)
-   Vlocal_old%f(ix,iy,iz)= V_local(1)%f(ix,iy,iz)
-end do
-end do
-end do
-
 call timer_end(LOG_INIT_GS_ITERATION)
 
 
@@ -206,7 +191,6 @@ call scf_iteration_dft( Miter,rion_update,sum1,  &
                         rho,rho_jm,rho_s,  &
                         V_local,Vh,Vxc,Vpsl,xc_func,  &
                         pp,ppg,ppn,  &
-                        rho_old,Vlocal_old,  &
                         band, ilevel_print, dc)
 
 
