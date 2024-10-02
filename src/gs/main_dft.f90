@@ -21,7 +21,7 @@ subroutine main_dft
 use math_constants, only: pi, zi
 use structures
 use inputoutput
-use parallelization, only: nproc_id_global,nproc_group_global,adjust_elapse_time
+use parallelization, only: nproc_id_global,nproc_group_global,adjust_elapse_time,nproc_size_global
 use communication, only: comm_is_root, comm_summation, comm_bcast, comm_sync_all
 use salmon_xc
 use timer
@@ -222,7 +222,7 @@ if(yn_out_tm  == 'y'.or.yn_out_gs_sgm_eps=='y') then
 end if
 
    ! force
-   if(yn_jm=='n')then
+   if(yn_jm=='n' .and. yn_dc=="n")then
      call calc_force(system,pp,fg,info,mg,stencil,poisson,srg,ppg,spsi,ewald)
      if(comm_is_root(nproc_id_global))then
         write(*,*) "===== force ====="
@@ -314,7 +314,7 @@ if(yn_dc=='y') then
 end if
 
 ! write GS: basic data
-call write_band_information(system,energy)
+if(yn_dc=='n') call write_band_information(system,energy)
 call write_eigen(ofl,system,energy)
 call write_info_data(Miter,system,energy,pp)
 call write_k_data(system,stencil)
@@ -366,6 +366,14 @@ call timer_end(LOG_WRITE_GS_DATA)
 !call timer_end(LOG_WRITE_GS_INFO)
 
 call finalize_xc(xc_func)
+
+if(yn_dc=='y') then
+! override (restore)
+  nproc_group_global = dc%icomm_tot
+  nproc_id_global = dc%id_tot
+  nproc_size_global = dc%isize_tot
+  call comm_sync_all
+end if
 
 call timer_end(LOG_TOTAL)
 
