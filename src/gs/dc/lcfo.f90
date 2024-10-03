@@ -440,15 +440,25 @@ contains
       use communication, only: comm_bcast
       use eigen_libs_mod
       implicit none
-      integer :: n,nx,ny,ix_s,ix_e,iy_s,iy_e,i_loc,j_loc
+      integer :: n,nx,ny,ix_s,ix_e,iy_s,iy_e,ix_loc,iy_loc,ifrag_x,ifrag_y,io_x,io_y
       integer :: nnod,x_nnod,y_nnod,inod,x_inod,y_inod
       integer :: jfrag_halo(n_halo)
+      integer, allocatable :: io_array(:),ifrag_array(:)
       real(8), allocatable :: h_div(:,:), v_div(:,:), h(:,:,:)
       
       allocate(h(dc%nstate_frag,dc%nstate_frag,0:n_halo))
       do ispin=1,nspin
         if(dc%id_tot==0) write(*,*) "eigenexa diag, #dim=",n_mat(ispin)
         n = n_mat(ispin)
+        
+        allocate(io_array(n),ifrag_array(n))
+        do ifrag=1,dc%n_frag
+          do io=1,n_basis(ifrag,ispin) ; i = index_basis(io,ifrag,ispin)
+            io_array(i) = io
+            ifrag_array(i) = ifrag
+          end do
+        end do
+        
         call eigen_init(dc%icomm_tot)
         call eigen_get_matdims( n, nx, ny )
         call eigen_get_procs( nnod, x_nnod, y_nnod )
@@ -459,6 +469,7 @@ contains
         iy_s = eigen_loop_start( 1, y_nnod, y_inod )
         iy_e = eigen_loop_end  ( n, y_nnod, y_inod )
         
+        h_div = 0d0
         do ifrag=1,dc%n_frag
           if(ifrag==dc%i_frag .and. dc%id_frag==0) then
             h(:,:,0) = mat_H_local(:,:,ispin)
@@ -468,22 +479,40 @@ contains
             end do
           end if
           call comm_bcast( h, dc%icomm_tot, id_array(ifrag) )
-          do j_loc=iy_s,iy_e ; j = eigen_translate_l2g(j_loc, y_nnod, y_inod)
-          do i_loc=ix_s,ix_e ; i = eigen_translate_l2g(i_loc, x_nnod, x_inod)
-!???            if( i .and. j ) h_div(i_loc,j_loc) = h(io,jo,)
-          end do
-          end do
-        end do
+          call comm_bcast( jfrag_halo, dc%icomm_tot, id_array(ifrag) )
+          do iy_loc=iy_s,iy_e
+            iy = eigen_translate_l2g(iy_loc, y_nnod, y_inod)
+            ifrag_y = ifrag_array(iy)
+            io_y = io_array(iy)
+            do ix_loc=ix_s,ix_e
+              ix = eigen_translate_l2g(ix_loc, x_nnod, x_inod)
+              ifrag_x = ifrag_array(ix)
+              io_x = io_array(ix)
+              if(ifrag_x == ifrag .and. ifrag_y == ifrag) then
+                h_div(ix_loc,iy_loc) = h(io_x,io_y,0)
+              end if
+              do i_halo=1,n_halo
+                if( ifrag_x == jfrag_halo(i_halo) .and. ifrag_y == ifrag ) then
+                  h_div(ix_loc,iy_loc) = h_div(ix_loc,iy_loc) &
+                  & + 0.5d0* h(io_x,io_y,i_halo) ! 0.5d0* : for double counting
+                else if( ifrag_x == ifrag .and. ifrag_y == jfrag_halo(i_halo) ) then
+                  h_div(ix_loc,iy_loc) = h_div(ix_loc,iy_loc) &
+                  & + 0.5d0* h(io_y,io_x,i_halo) ! 0.5d0* : for double counting
+                end if
+              end do ! i_halo
+            end do ! ix_loc
+          end do ! iy_loc
+        end do ! ifrag
         
-        call eigen_sx(n, n, h_div, nx, e, v_div, nx)
+        call eigen_sx(n, n, h_div, nx, esp_tot(1:n,ispin), v_div, nx)
         
-        do j_loc=iy_s,iy_e ; j = eigen_translate_l2g(j_loc, y_nnod, y_inod)
-        do i_loc=ix_s,ix_e ; i = eigen_translate_l2g(i_loc, x_nnod, x_inod)
+!        do j_loc=iy_s,iy_e ; j = eigen_translate_l2g(j_loc, y_nnod, y_inod)
+!        do i_loc=ix_s,ix_e ; i = eigen_translate_l2g(i_loc, x_nnod, x_inod)
 !???          coef_wf() = v_div(i_loc,j_loc)
-        end do
-        end do
+!        end do
+!        end do
         
-        deallocate(h_div,v_div)
+        deallocate(h_div,v_div,io_array,ifrag_array)
         call eigen_free()
       end do ! ispin
       
