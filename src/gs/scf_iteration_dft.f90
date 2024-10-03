@@ -256,7 +256,7 @@ DFT_Iteration : do iter=Miter+1,nscf
    ! DC method
      call convergence_check(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%rho_tot,dc%vloc_tot)
      if(comm_is_root(dc%id_tot)) then
-       write(*,'(a, i6 ,3x , a, 3x, e15.8)') "DC #SCF=",Miter,"conv[a.u.]=",sum1
+       write(*,'(a, i6 ,3x , a, 3x, e15.8)') "DC #SCF=",Miter,"diff=",sum1
      end if
    end if
    

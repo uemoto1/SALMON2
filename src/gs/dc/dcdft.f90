@@ -20,7 +20,8 @@ contains
 
   subroutine init_dcdft(dc,pp,mixing)
     use structures
-    use salmon_global, only: nproc_k, nproc_ob, nproc_rgrid, nproc_rgrid_tot, nstate, nelec, yn_dc
+    use salmon_global, only: nproc_k, nproc_ob, nproc_rgrid, nproc_rgrid_tot &
+    & , nstate, nelec, yn_dc, nstate_frag
     implicit none
     type(s_dcdft)  ,intent(inout) :: dc
     type(s_pp_info),intent(inout) :: pp
@@ -31,19 +32,19 @@ contains
     if(nproc_k/=1) stop "DC method (yn_dc=y): nproc_k must be 1 for both the total system and fragments."
     nproc_ob_tmp = nproc_ob
     nproc_rgrid_tmp = nproc_rgrid
-    dc%nstate_frag = nstate ! nstate for the fragment !!!!!! future work: new input variable
+    dc%nstate_tot = nstate
+    dc%nstate_frag = nstate_frag
     
   ! total system
     nproc_ob = 1 ! override
     nproc_rgrid = nproc_rgrid_tot ! override
-    nstate = nelec ! override !!!!!! future work: remove
     yn_dc = 't' ! override !!!!!! future work: remove
     call init_total
     
   ! fragment
     nproc_ob = nproc_ob_tmp ! override
     nproc_rgrid = nproc_rgrid_tmp ! override
-    nstate = dc%nstate_frag ! override !!!!!! future work: new input variable
+    nstate = dc%nstate_frag ! override
     yn_dc = 'y' ! override !!!!!! future work: remove
     call init_comm_frag
     call init_fragment
@@ -157,7 +158,7 @@ contains
     ! base_directory for the fragment
       call atomic_create_directory(base_directory,icomm_frag,id_frag)
       
-write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_frag,isize_frag,dc%id_tot,dc%isize_tot  !!!!!!!!! test_dcdft
+!write(*,'(a,5i10)') " i_frag,id_F,isize_F,id,isize",dc%i_frag,id_frag,isize_frag,dc%id_tot,dc%isize_tot
       
     end subroutine init_comm_frag
     
@@ -249,7 +250,7 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     ! set variables for own fragment
     
     ! nelec (total system) --> nelec (fragment)
-      nelec = nelec * natom_frag(dc%i_frag) / natom !!!!!!!!! test_dcdft !!!!!!!!
+      nelec = nelec * natom_frag(dc%i_frag) / natom ! initial guess
     
     ! al, num_rgrid (total system) --> al, num_rgrid (fragment)
       al = ldomain + 2d0*lbuffer
@@ -281,7 +282,9 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
         end do
       end do
       
-      if(dc%id_frag==0) write(*,'(a,6i10)') "test_dcdft 2: i_frag, natom, nelec, ixyz_frag",dc%i_frag, natom, nelec, dc%ixyz_frag(1:3,dc%i_frag)  !!!!!!!!! test_dcdft
+      if(dc%id_frag==0) then
+        write(*,'(a,6i10)') "fragment, natom, nelec, ixyz_frag: ",dc%i_frag, natom, nelec, dc%ixyz_frag(1:3,dc%i_frag)
+      end if
     
     end subroutine init_fragment
     
@@ -354,7 +357,9 @@ write(*,'(a,5i10)') "test_dcdft 1: i_frag,id_F,isize_F,id,isize",dc%i_frag,id_fr
     end do
     end do
 
-if(dc%id_tot==0) write(*,*) "test_dcdft rho",sum(tot)*dc%system_tot%hvol,dc%elec_num_tot !!!!!!!!! test_dcdft
+    if(dc%id_tot==0) then
+      write(*,*) "integral(rho_tot)=",sum(tot)*dc%system_tot%hvol," Ne=",dc%elec_num_tot
+    end if
     
   end subroutine calc_rho_total_dcdft
   
@@ -506,7 +511,7 @@ if(dc%id_tot==0) write(*,*) "test_dcdft rho",sum(tot)*dc%system_tot%hvol,dc%elec
       end if
       
       if(yn_spinorbit=='y') then
-        neout = neout*0.5d0 !!! For the SO mode, jspin=2 components are duplicate copy of jspin=1.
+        neout = neout*0.5d0 !!! For the SO mode, ispin=2 components are duplicate copy of jspin=1.
       end if
 
     END SUBROUTINE mu2ne
@@ -544,9 +549,9 @@ if(dc%id_tot==0) write(*,*) "test_dcdft rho",sum(tot)*dc%system_tot%hvol,dc%elec
                mu2 = emax + 0.2d0*dble(nc)
                cycle ITERATION
             else
-               print *,'=================================='
-               print *,'Const Ne does not converged!!!!!!!'
-               print *,'=================================='
+               !print *,'=================================='
+               !print *,'Const Ne does not converged!!!!!!!'
+               !print *,'=================================='
                exit ITERATION
             endif
           endif

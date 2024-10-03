@@ -33,7 +33,6 @@ contains
 
   subroutine dc_lcfo(lg,mg,system,info,stencil,ppg,energy,v_local,spsi,shpsi,sttpsi,srg,dc)
     use communication, only: comm_summation
-    use eigen_subdiag_sub, only: eigen_dsyev
     use structures
     implicit none
     type(s_rgrid),        intent(in) :: lg,mg
@@ -55,13 +54,14 @@ contains
     !
     type(halo_info) :: halo(26) ! 26 = 3^3-1
     integer :: nspin,n_halo
+    integer :: id_array(dc%n_frag)
     integer :: n_basis(dc%n_frag,system%nspin), n_mat(system%nspin)
     integer :: index_basis(dc%nstate_frag,dc%n_frag,system%nspin)
     real(8) :: hvol
-    real(8),allocatable :: f_basis(:,:,:,:,:),hf(:,:,:,:,:),wrk_array(:,:,:,:,:), &
-    & mat_H(:,:,:),mat_V(:,:,:),esp_tot(:,:),mat_H_local(:,:,:)
+    real(8),allocatable :: f_basis(:,:,:,:,:),hf(:,:,:,:,:),wrk_array(:,:,:,:,:) &
+    & ,esp_tot(:,:),mat_H_local(:,:,:),coef_wf(:,:,:)
     !
-    integer :: i,j,n,ix,iy,iz,io,jo,ispin,ifrag,jfrag
+    integer :: i,j,n,ix,iy,iz,io,jo,ispin,ifrag,jfrag,i_halo
     
     hvol = system%hvol
     nspin = system%nspin
@@ -80,19 +80,13 @@ contains
     
     if(dc%id_tot==0) write(*,*) "Hamiltonian matrix: done"
     
+    allocate(esp_tot(maxval(n_mat),nspin))
+    if(dc%id_frag==0) allocate(coef_wf(dc%nstate_frag,dc%nstate_tot,nspin))
+    
 #ifdef USE_EIGENEXA
-    do ispin=1,nspin
-      if(dc%id_tot==0) write(*,*) "eigenexa diag, #dim=",n_mat(ispin)
-      call eigenexa_dsyev(n_mat(ispin),mat_H(1:n_mat(ispin),1:n_mat(ispin),ispin) &
-      &                  ,esp_tot(1:n_mat(ispin),ispin) &
-      &                  ,mat_V(1:n_mat(ispin),1:n_mat(ispin),ispin))
-    end do
+    call diag_eigenexa
 #else
-    do ispin=1,nspin
-      if(dc%id_tot==0) write(*,*) "lapack diag, #dim=",n_mat(ispin)
-      call eigen_dsyev(mat_H(1:n_mat(ispin),1:n_mat(ispin),ispin),esp_tot(1:n_mat(ispin),ispin) &
-      &               ,mat_V(1:n_mat(ispin),1:n_mat(ispin),ispin))
-    end do
+    call diag_lapack
 #endif
     
     if(dc%id_tot==0) write(*,*) "diagonalization: done"
@@ -103,11 +97,11 @@ contains
     
     if(dc%id_tot==0) write(*,*) "end DC-LCFO"
 
-    deallocate(f_basis)
+    if(dc%id_frag==0) deallocate(coef_wf)
     do i=1,n_halo
       if(allocated(halo(i)%mat_H_local)) deallocate(halo(i)%mat_H_local)
     end do
-    deallocate(mat_H,mat_V,esp_tot,mat_H_local)
+    deallocate(f_basis,esp_tot,mat_H_local)
     
   contains
   
@@ -116,7 +110,7 @@ contains
       implicit none
       integer :: lx,ly,lz
       integer,dimension(3) :: nh,ir1,ir2,d
-      integer,dimension(dc%n_frag) :: id_array, id_tmp
+      integer :: id_tmp(dc%n_frag)
       
       id_tmp = 0
       if(dc%id_frag==0) id_tmp(dc%i_frag) = dc%id_tot + 1
@@ -183,6 +177,7 @@ contains
     end subroutine init_lcfo
     
     subroutine calc_basis
+      use eigen_subdiag_sub, only: eigen_dsyev
       use salmon_global, only: energy_cut,lambda_cut
       implicit none
       integer :: nb(nspin),itmp(dc%n_frag,nspin)
@@ -324,10 +319,9 @@ contains
     subroutine calc_hamiltonian_matrix
       use communication, only: comm_isend, comm_irecv, comm_wait_all
       implicit none
-      integer :: i_halo,d(3),l(3),nmax
+      integer :: d(3),l(3)
       integer :: itag_send,itag_recv
       integer,dimension(n_halo) :: ireq_send,ireq_recv
-      real(8) :: wrk
       
     ! diagonal block < lambda_{ifrag,io} | H | lambda_{ifrag,jo} >
       allocate(mat_H_local(dc%nstate_frag,dc%nstate_frag,nspin))
@@ -391,18 +385,27 @@ contains
         end do
       end if ! dc%id_frag==0
       deallocate(hf)
+            
+    end subroutine calc_hamiltonian_matrix
+    
+    subroutine diag_lapack
+      use eigen_subdiag_sub, only: eigen_dsyev
+      implicit none
+      real(8) :: wrk
+      real(8),allocatable :: mat_H(:,:),mat_V(:,:)
       
-    ! mat_H <-- total Hamiltonian matrix < lambda | H | lambda >
-      nmax = maxval(n_mat)
-      allocate(mat_H(nmax,nmax,nspin),mat_V(nmax,nmax,nspin),esp_tot(nmax,nspin))
-      mat_V = 0d0
-      if(dc%id_frag==0) then
-        ifrag = dc%i_frag
-        do ispin=1,nspin
+      do ispin=1,nspin
+        if(dc%id_tot==0) write(*,*) "lapack diag, #dim=",n_mat(ispin)
+        n = n_mat(ispin)
+      ! mat_H <-- total Hamiltonian matrix < lambda | H | lambda >
+        allocate(mat_H(n,n),mat_V(n,n))
+        mat_V = 0d0
+        if(dc%id_frag==0) then
+          ifrag = dc%i_frag
         ! diagonal block < lambda_{ifrag,io} | H | lambda_{ifrag,jo} >
           do io=1,n_basis(ifrag,ispin) ; i = index_basis(io,ifrag,ispin)
           do jo=1,n_basis(ifrag,ispin) ; j = index_basis(jo,ifrag,ispin)
-            mat_V(i,j,ispin) = mat_H_local(io,jo,ispin)
+            mat_V(i,j) = mat_H_local(io,jo,ispin)
           end do
           end do
         ! off-diagonal block < lambda_{jfrag,jo} | H | lambda_{ifrag,io} >
@@ -411,63 +414,81 @@ contains
             do io=1,n_basis(ifrag,ispin) ; i = index_basis(io,ifrag,ispin)
             ! mat_H_local(jo,io) == < lambda_{jfrag,jo} | H | lambda_{ifrag,io} >
               wrk = 0.5d0* halo(i_halo)%mat_H_local(jo,io,ispin) ! 0.5d0* : for double counting
-              mat_V(j,i,ispin) = mat_V(j,i,ispin) + wrk
-              mat_V(i,j,ispin) = mat_V(i,j,ispin) + wrk
+              mat_V(j,i) = mat_V(j,i) + wrk
+              mat_V(i,j) = mat_V(i,j) + wrk
             end do
             end do
           end do
-        end do ! ispin=1,nspin
-      end if ! dc%id_frag==0
-      call comm_summation(mat_V,mat_H,nmax*nmax*nspin,dc%icomm_tot)
+        end if ! dc%id_frag==0
+        call comm_summation(mat_V,mat_H,n*n,dc%icomm_tot)
+        call eigen_dsyev(mat_H,esp_tot(1:n,ispin),mat_V)
+        if(dc%id_frag==0) then
+          ifrag = dc%i_frag
+          do i=1,dc%nstate_tot
+          do jo=1,n_basis(ifrag,ispin) ; j = index_basis(jo,ifrag,ispin)
+            coef_wf(jo,i,ispin) = mat_V(j,i) ! coefficients of the wavefunctions
+          end do
+          end do
+        end if
+        deallocate(mat_H,mat_V)
+      end do ! ispin
       
-    end subroutine calc_hamiltonian_matrix
+    end subroutine diag_lapack
     
 #ifdef USE_EIGENEXA
-    subroutine eigenexa_dsyev(n,h,e,v)
+    subroutine diag_eigenexa
+      use communication, only: comm_bcast
       use eigen_libs_mod
       implicit none
-      integer,intent(in) :: n
-      real(8),intent(in) :: h(n,n)
-      real(8)            :: e(n)
-      real(8)            :: v(n,n)
-      !
-      integer :: nx,ny,ix_s,ix_e,iy_s,iy_e,i_loc,j_loc
+      integer :: n,nx,ny,ix_s,ix_e,iy_s,iy_e,i_loc,j_loc
       integer :: nnod,x_nnod,y_nnod,inod,x_inod,y_inod
-      real(8), allocatable :: h_div(:,:), v_div(:,:), v_tmp(:,:)
+      integer :: jfrag_halo(n_halo)
+      real(8), allocatable :: h_div(:,:), v_div(:,:), h(:,:,:)
       
-      call eigen_init(dc%icomm_tot)
+      allocate(h(dc%nstate_frag,dc%nstate_frag,0:n_halo))
+      do ispin=1,nspin
+        if(dc%id_tot==0) write(*,*) "eigenexa diag, #dim=",n_mat(ispin)
+        n = n_mat(ispin)
+        call eigen_init(dc%icomm_tot)
+        call eigen_get_matdims( n, nx, ny )
+        call eigen_get_procs( nnod, x_nnod, y_nnod )
+        call eigen_get_id   ( inod, x_inod, y_inod )
+        allocate( h_div(nx,ny), v_div(nx,ny) )
+        ix_s = eigen_loop_start( 1, x_nnod, x_inod )
+        ix_e = eigen_loop_end  ( n, x_nnod, x_inod )
+        iy_s = eigen_loop_start( 1, y_nnod, y_inod )
+        iy_e = eigen_loop_end  ( n, y_nnod, y_inod )
+        
+        do ifrag=1,dc%n_frag
+          if(ifrag==dc%i_frag .and. dc%id_frag==0) then
+            h(:,:,0) = mat_H_local(:,:,ispin)
+            do i_halo=1,n_halo
+              jfrag_halo(i_halo) = halo(i_halo)%ifrag_src ! src fragment (recv)
+              h(:,:,i_halo) = halo(i_halo)%mat_H_local(:,:,ispin)
+            end do
+          end if
+          call comm_bcast( h, dc%icomm_tot, id_array(ifrag) )
+          do j_loc=iy_s,iy_e ; j = eigen_translate_l2g(j_loc, y_nnod, y_inod)
+          do i_loc=ix_s,ix_e ; i = eigen_translate_l2g(i_loc, x_nnod, x_inod)
+!???            if( i .and. j ) h_div(i_loc,j_loc) = h(io,jo,)
+          end do
+          end do
+        end do
+        
+        call eigen_sx(n, n, h_div, nx, e, v_div, nx)
+        
+        do j_loc=iy_s,iy_e ; j = eigen_translate_l2g(j_loc, y_nnod, y_inod)
+        do i_loc=ix_s,ix_e ; i = eigen_translate_l2g(i_loc, x_nnod, x_inod)
+!???          coef_wf() = v_div(i_loc,j_loc)
+        end do
+        end do
+        
+        deallocate(h_div,v_div)
+        call eigen_free()
+      end do ! ispin
       
-      call eigen_get_matdims( n, nx, ny )
-      call eigen_get_procs( nnod, x_nnod, y_nnod )
-      call eigen_get_id   ( inod, x_inod, y_inod )
-      
-      allocate( h_div(nx,ny), &
-                v_div(nx,ny), &
-                v_tmp(n,n) )
-                
-      ix_s = eigen_loop_start( 1, x_nnod, x_inod )
-      ix_e = eigen_loop_end  ( n, x_nnod, x_inod )
-      iy_s = eigen_loop_start( 1, y_nnod, y_inod )
-      iy_e = eigen_loop_end  ( n, y_nnod, y_inod )
-      do j_loc=iy_s,iy_e ; j = eigen_translate_l2g(j_loc, y_nnod, y_inod)
-      do i_loc=ix_s,ix_e ; i = eigen_translate_l2g(i_loc, x_nnod, x_inod)
-        h_div(i_loc,j_loc) = h(i,j)
-      end do
-      end do
-      
-      call eigen_sx(n, n, h_div, nx, e, v_div, nx)
-      
-      v_tmp = 0d0
-      do j_loc=iy_s,iy_e ; j = eigen_translate_l2g(j_loc, y_nnod, y_inod)
-      do i_loc=ix_s,ix_e ; i = eigen_translate_l2g(i_loc, x_nnod, x_inod)
-        v_tmp(i,j) = v_div(i_loc,j_loc)
-      end do
-      end do
-      call comm_summation(v_tmp,v,n*n,dc%icomm_tot)
-      
-      deallocate(h_div,v_div,v_tmp)
-      call eigen_free( )
-    end subroutine eigenexa_dsyev
+      deallocate(h)
+    end subroutine diag_eigenexa
 #endif
     
     subroutine output
@@ -494,21 +515,9 @@ contains
         end select
         do ispin=1,nspin
           write(iunit,'("# spin=",1x,i5)') ispin
-          do i=1,n_mat(ispin)
+          do i=1,dc%nstate_tot
             write(iunit,'(1x,i5,e26.16e3)') i,esp_tot(i,ispin)*uenergy_from_au
           end do
-        end do
-        close(iunit)
-      ! coefficients of the wavefunctions
-        iunit = get_filehandle()
-        filename = trim(dc%base_directory)//binfile_wf ! @ ./data_dcdft/total/
-        open(iunit,file=filename,form='unformatted',access='stream')
-        write(iunit) dc%n_frag, nspin, dc%nstate_frag
-        write(iunit) n_mat(1:nspin)
-        write(iunit) n_basis(1:dc%n_frag,1:nspin)
-        write(iunit) index_basis(1:dc%nstate_frag,1:dc%n_frag,1:nspin)
-        do ispin=1,nspin
-          write(iunit) mat_V(1:n_mat(ispin),1:n_mat(ispin),ispin)
         end do
         close(iunit)
       end if
@@ -543,6 +552,16 @@ contains
           write(iunit) halo(i_halo)%mat_H_local(1:dc%nstate_frag,1:dc%nstate_frag,1:nspin)
         end do
         close(iunit)
+      ! coefficients of the wavefunctions
+        iunit = get_filehandle()
+        filename = trim(base_directory)//binfile_wf
+        open(iunit,file=filename,form='unformatted',access='stream')
+        write(iunit) dc%n_frag, nspin, dc%nstate_frag, dc%nstate_tot
+        write(iunit) n_mat(1:nspin)
+        write(iunit) n_basis(1:dc%n_frag,1:nspin)
+        write(iunit) index_basis(1:dc%nstate_frag,1:dc%n_frag,1:nspin)
+        write(iunit) coef_wf(1:dc%nstate_frag,1:dc%nstate_tot,1:nspin)
+        close(iunit)
       end if
       
     end subroutine output
@@ -570,7 +589,7 @@ contains
         do iy=1,dc%nxyz_domain(2); iy_tot = dc%jxyz_tot(iy,2)
         do ix=1,dc%nxyz_domain(1); ix_tot = dc%jxyz_tot(ix,1)
           wrk1(ix_tot,iy_tot,iz_tot) = wrk1(ix_tot,iy_tot,iz_tot) &
-          & + f_basis(ix,iy,iz,ispin,jo) * mat_V(j,io,ispin)
+          & + f_basis(ix,iy,iz,ispin,jo) * coef_wf(jo,io,ispin)
         end do
         end do
         end do
@@ -616,50 +635,25 @@ contains
     type(s_parallel_info),intent(in) :: info
     type(s_orbital)                  :: spsi
     !
-    character(32),parameter :: bdir_tot='./data_dcdft/total/',bdir_frag='./data_dcdft/fragments/'
+    character(32),parameter :: bdir_frag='./data_dcdft/fragments/'
     character(256) :: filename
-    integer :: iunit, n_frag, nspin, nstate_frag, nmax
+    integer :: iunit, n_frag, nspin, nstate_frag, nstate_tot
     integer :: i,j,jfrag,ispin,io,jo,ix,iy,iz,ix_tot,iy_tot,iz_tot,n
     integer,dimension(3) :: lgnum_frag,lgnum_tmp,nxyz_domain
     !
     integer,allocatable :: n_mat(:),n_basis(:,:),index_basis(:,:,:),jxyz_tot(:,:)
-    real(8),allocatable :: f_basis(:,:,:,:,:),mat_V(:,:,:),wrk1(:,:,:),wrk2(:,:,:)
+    real(8),allocatable :: f_basis(:,:,:,:,:),coef_wf(:,:,:),wrk1(:,:,:),wrk2(:,:,:)
     
-  ! read coefficients of the wavefunctions ./data_dcdft/total/wavefunctions.bin
-    allocate(n_mat(system%nspin))
+    nspin = system%nspin
+    n_frag = product(num_fragment)
+    nstate_tot = 0 ! initial
+    
     if(comm_is_root(info%id_rko)) then
       write(*,*) "TDDFT & yn_dc==y : conventional TDDFT but wavefunctions are reconstructed from DC-LCFO data"
       write(*,*) "read from ./data_dcdft directory"
-      iunit = get_filehandle()
-      filename = trim(bdir_tot)//binfile_wf ! @ ./data_dcdft/total/
-      open(iunit,file=filename,form='unformatted',access='stream')
-      read(iunit) n_frag, nspin, nstate_frag
-      if( n_frag /= product(num_fragment) .or. nspin /= system%nspin ) stop "data_dcdft: input mismatch"
-      read(iunit) n_mat(1:nspin)
     end if
-    nspin = system%nspin
-    call comm_bcast(n_frag,info%icomm_rko)
-    call comm_bcast(nstate_frag,info%icomm_rko)
-    call comm_bcast(n_mat,info%icomm_rko)
-    allocate(n_basis(n_frag,nspin))
-    allocate(index_basis(nstate_frag,n_frag,nspin))
-    nmax = maxval(n_mat)
-    allocate(mat_V(nmax,nmax,nspin))
-    if(comm_is_root(info%id_rko)) then
-      read(iunit) n_basis(1:n_frag,1:nspin)
-      read(iunit) index_basis(1:nstate_frag,1:n_frag,1:nspin)
-      do ispin=1,nspin
-        read(iunit) mat_V(1:n_mat(ispin),1:n_mat(ispin),ispin)
-      end do
-      close(iunit)
-    end if
-    call comm_bcast(n_basis,info%icomm_rko)
-    do ispin=1,nspin
-      call comm_bcast(index_basis(1:nstate_frag,1:n_frag,ispin),info%icomm_rko)
-    end do
-    call comm_bcast(mat_V,info%icomm_rko)
     
-  ! read fragment basis functions ./data_dcdft/fragments/*/basis_functions.bin
+  ! read fragment data ./data_dcdft/fragments/*/*.bin
     if(info%isize_rko < n_frag) stop "yn_dc=y: MPI size is too small."
     n = info%isize_rko / n_frag
     jfrag = -1
@@ -670,6 +664,21 @@ contains
       end if
     end do
     if(jfrag > 0) then ! myrank (info%id_rko) <--> jfrag
+    ! coefficients of the wavefunctions
+      iunit = get_filehandle()
+      write(filename, '(a, i6.6, a, a)') trim(bdir_frag), jfrag, '/', binfile_wf
+      open(iunit,file=filename,form='unformatted',access='stream')
+      read(iunit) n_frag, nspin, nstate_frag, nstate_tot
+      if( n_frag /= product(num_fragment) .or. nspin /= system%nspin ) stop "data_dcdft: input mismatch"
+      allocate(n_mat(nspin))
+      allocate(n_basis(n_frag,nspin))
+      allocate(index_basis(nstate_frag,n_frag,nspin))
+      allocate(coef_wf(nstate_frag,nstate_tot,nspin))
+      read(iunit) n_mat(1:nspin)
+      read(iunit) n_basis(1:n_frag,1:nspin)
+      read(iunit) index_basis(1:nstate_frag,1:n_frag,1:nspin)
+      read(iunit) coef_wf(1:nstate_frag,1:nstate_tot,1:nspin)
+      close(iunit)    
     ! r-grid index
       iunit = get_filehandle()
       write(filename, '(a, i6.6, a, a)') trim(bdir_frag), jfrag, '/', binfile_rg
@@ -701,13 +710,13 @@ contains
     do ispin=1,nspin
     do io=1,system%no
       wrk1 = 0d0
-      if(jfrag > 0) then ! myrank (info%id_rko) <--> jfrag
+      if(jfrag > 0 .and. io <= nstate_tot) then ! myrank (info%id_rko) <--> jfrag
         do jo=1,n_basis(jfrag,ispin) ; j = index_basis(jo,jfrag,ispin)
         do iz=1,nxyz_domain(3); iz_tot = jxyz_tot(iz,3)
         do iy=1,nxyz_domain(2); iy_tot = jxyz_tot(iy,2)
         do ix=1,nxyz_domain(1); ix_tot = jxyz_tot(ix,1)
           wrk1(ix_tot,iy_tot,iz_tot) = wrk1(ix_tot,iy_tot,iz_tot) &
-          & + f_basis(ix,iy,iz,ispin,jo) * mat_V(j,io,ispin)
+          & + f_basis(ix,iy,iz,ispin,jo) * coef_wf(jo,io,ispin)
         end do
         end do
         end do
@@ -726,7 +735,8 @@ contains
     end do
     end do
     
-    deallocate(n_mat,n_basis,index_basis,mat_V,wrk1,wrk2)
+    if(jfrag > 0) deallocate(n_mat,n_basis,index_basis,coef_wf)
+    deallocate(wrk1,wrk2)
   end subroutine restart_rt_from_data_dcdft
   
 

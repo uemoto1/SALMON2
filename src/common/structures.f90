@@ -478,6 +478,7 @@ module structures
   ! total system
     integer :: icomm_tot, id_tot, isize_tot ! MPI communicator, process ID, & # of processes
     character(256) :: base_directory
+    integer :: nstate_tot ! nstate for the total system
     real(8) :: elec_num_tot ! total electron number
     type(s_dft_system)      :: system_tot
     type(s_parallel_info)   :: info_tot
