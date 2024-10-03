@@ -444,9 +444,11 @@ contains
       integer :: nnod,x_nnod,y_nnod,inod,x_inod,y_inod
       integer :: jfrag_halo(n_halo)
       integer, allocatable :: io_array(:),ifrag_array(:)
-      real(8), allocatable :: h_div(:,:), v_div(:,:), h(:,:,:)
+      real(8), allocatable :: h_div(:,:), v_div(:,:), h(:,:,:), v_tmp1(:,:), v_tmp2(:,:)
       
       allocate(h(dc%nstate_frag,dc%nstate_frag,0:n_halo))
+      allocate(v_tmp1(dc%nstate_frag,dc%nstate_tot))
+      allocate(v_tmp2(dc%nstate_frag,dc%nstate_tot))
       do ispin=1,nspin
         if(dc%id_tot==0) write(*,*) "eigenexa diag, #dim=",n_mat(ispin)
         n = n_mat(ispin)
@@ -506,17 +508,30 @@ contains
         
         call eigen_sx(n, n, h_div, nx, esp_tot(1:n,ispin), v_div, nx)
         
-!        do j_loc=iy_s,iy_e ; j = eigen_translate_l2g(j_loc, y_nnod, y_inod)
-!        do i_loc=ix_s,ix_e ; i = eigen_translate_l2g(i_loc, x_nnod, x_inod)
-!???          coef_wf() = v_div(i_loc,j_loc)
-!        end do
-!        end do
+        do ifrag=1,dc%n_frag
+          v_tmp1 = 0d0
+          do iy_loc=iy_s,iy_e
+            iy = eigen_translate_l2g(iy_loc, y_nnod, y_inod)
+            do ix_loc=ix_s,ix_e
+              ix = eigen_translate_l2g(ix_loc, x_nnod, x_inod)
+              ifrag_x = ifrag_array(ix)
+              io_x = io_array(ix)
+              if(iy <= dc%nstate_tot .and. ifrag_x == ifrag) then
+                v_tmp1(io_x,iy) = v_div(ix_loc,iy_loc)
+              end if
+            end do
+          end do
+          call comm_summation(v_tmp1,v_tmp2,dc%nstate_frag*dc%nstate_tot,dc%icomm_tot)
+          if(ifrag==dc%i_frag .and. dc%id_frag==0) then
+            coef_wf(:,:,ispin) = v_tmp2
+          end if
+        end do ! ifrag
         
         deallocate(h_div,v_div,io_array,ifrag_array)
         call eigen_free()
       end do ! ispin
       
-      deallocate(h)
+      deallocate(h,v_tmp1,v_tmp2)
     end subroutine diag_eigenexa
 #endif
     
@@ -764,7 +779,7 @@ contains
     end do
     end do
     
-    if(jfrag > 0) deallocate(n_mat,n_basis,index_basis,coef_wf)
+    if(jfrag > 0) deallocate(n_mat,n_basis,index_basis,jxyz_tot,coef_wf,f_basis)
     deallocate(wrk1,wrk2)
   end subroutine restart_rt_from_data_dcdft
   
