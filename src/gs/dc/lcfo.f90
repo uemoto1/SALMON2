@@ -33,6 +33,7 @@ contains
 
   subroutine dc_lcfo(lg,mg,system,info,stencil,ppg,energy,v_local,spsi,shpsi,sttpsi,srg,dc)
     use communication, only: comm_summation
+    use salmon_global, only: yn_dc_lcfo_diag
     use structures
     implicit none
     type(s_rgrid),        intent(in) :: lg,mg
@@ -63,45 +64,39 @@ contains
     !
     integer :: i,j,n,ix,iy,iz,io,jo,ispin,ifrag,jfrag,i_halo
     
+    if(dc%id_tot==0) write(*,*) "start DC-LCFO"
     hvol = system%hvol
     nspin = system%nspin
-    
-    if(dc%id_tot==0) write(*,*) "start DC-LCFO"
-    
     call init_lcfo
-    
     call calc_basis
-    
     call hpsi_basis
-    
     if(dc%id_tot==0) write(*,*) "basis functions operation: done"
     
     call calc_hamiltonian_matrix
-    
     if(dc%id_tot==0) write(*,*) "Hamiltonian matrix: done"
     
-    allocate(esp_tot(maxval(n_mat),nspin))
-    if(dc%id_frag==0) allocate(coef_wf(dc%nstate_frag,dc%nstate_tot,nspin))
-    
+    if(yn_dc_lcfo_diag=='y') then
+      allocate(esp_tot(maxval(n_mat),nspin))
+      if(dc%id_frag==0) allocate(coef_wf(dc%nstate_frag,dc%nstate_tot,nspin))
 #ifdef USE_EIGENEXA
-    call diag_eigenexa
+      call diag_eigenexa
 #else
-    call diag_lapack
+      call diag_lapack
 #endif
-    
-    if(dc%id_tot==0) write(*,*) "diagonalization: done"
+      if(dc%id_tot==0) write(*,*) "diagonalization: done"
+      call test_write_psi !!!!!!!!! test_lcfo
+    end if
   
     call output
-    
-    call test_write_psi !!!!!!!!! test_lcfo
-    
-    if(dc%id_tot==0) write(*,*) "end DC-LCFO"
 
-    if(dc%id_frag==0) deallocate(coef_wf)
+    if(allocated(coef_wf)) deallocate(coef_wf)
+    if(allocated(f_basis)) deallocate(f_basis)
+    if(allocated(esp_tot)) deallocate(esp_tot)
+    if(allocated(mat_H_local)) deallocate(mat_H_local)
     do i=1,n_halo
       if(allocated(halo(i)%mat_H_local)) deallocate(halo(i)%mat_H_local)
     end do
-    deallocate(f_basis,esp_tot,mat_H_local)
+    if(dc%id_tot==0) write(*,*) "end DC-LCFO"
     
   contains
   
@@ -544,7 +539,7 @@ contains
       character(256) :: filename
       
     ! total system data
-      if(dc%id_tot==0) then
+      if(dc%id_tot==0 .and. yn_dc_lcfo_diag=='y') then
       ! eigen.data
         iunit = get_filehandle()
         filename = trim(dc%base_directory)//trim(sysname)//"_eigen.data" ! @ ./data_dcdft/total/
@@ -596,16 +591,18 @@ contains
           write(iunit) halo(i_halo)%mat_H_local(1:dc%nstate_frag,1:dc%nstate_frag,1:nspin)
         end do
         close(iunit)
-      ! coefficients of the wavefunctions
-        iunit = get_filehandle()
-        filename = trim(base_directory)//binfile_wf
-        open(iunit,file=filename,form='unformatted',access='stream')
-        write(iunit) dc%n_frag, nspin, dc%nstate_frag, dc%nstate_tot
-        write(iunit) n_mat(1:nspin)
-        write(iunit) n_basis(1:dc%n_frag,1:nspin)
-        write(iunit) index_basis(1:dc%nstate_frag,1:dc%n_frag,1:nspin)
-        write(iunit) coef_wf(1:dc%nstate_frag,1:dc%nstate_tot,1:nspin)
-        close(iunit)
+        if(yn_dc_lcfo_diag=='y') then
+        ! coefficients of the wavefunctions
+          iunit = get_filehandle()
+          filename = trim(base_directory)//binfile_wf
+          open(iunit,file=filename,form='unformatted',access='stream')
+          write(iunit) dc%n_frag, nspin, dc%nstate_frag, dc%nstate_tot
+          write(iunit) n_mat(1:nspin)
+          write(iunit) n_basis(1:dc%n_frag,1:nspin)
+          write(iunit) index_basis(1:dc%nstate_frag,1:dc%n_frag,1:nspin)
+          write(iunit) coef_wf(1:dc%nstate_frag,1:dc%nstate_tot,1:nspin)
+          close(iunit)
+        end if
       end if
       
     end subroutine output
@@ -783,5 +780,4 @@ contains
     deallocate(wrk1,wrk2)
   end subroutine restart_rt_from_data_dcdft
   
-
 end module lcfo

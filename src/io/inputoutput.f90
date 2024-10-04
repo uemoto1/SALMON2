@@ -592,6 +592,7 @@ contains
       & num_rgrid_buffer, &
       & nproc_rgrid_tot, &
       & yn_dc_lcfo, &
+      & yn_dc_lcfo_diag, &
       & nstate_frag, &
       & energy_cut, &
       & lambda_cut
@@ -1008,6 +1009,7 @@ contains
     num_rgrid_buffer = 0
     nproc_rgrid_tot = 1
     yn_dc_lcfo = 'y'
+    yn_dc_lcfo_diag = 'y'
     nstate_frag = 0
     energy_cut = 0d0
     lambda_cut = 1d-3
@@ -1627,6 +1629,7 @@ contains
     call comm_bcast(num_rgrid_buffer, nproc_group_global)
     call comm_bcast(nproc_rgrid_tot, nproc_group_global)
     call comm_bcast(yn_dc_lcfo, nproc_group_global)
+    call comm_bcast(yn_dc_lcfo_diag, nproc_group_global)
     call comm_bcast(nstate_frag, nproc_group_global)
     call comm_bcast(energy_cut, nproc_group_global)
     energy_cut = energy_cut * uenergy_to_au
@@ -2582,6 +2585,7 @@ contains
       write(fh_variables_log, '("#",4X,A,"=",3I4)') "num_rgrid_buffer", num_rgrid_buffer(1:3)
       write(fh_variables_log, '("#",4X,A,"=",3I4)') "nproc_rgrid_tot",nproc_rgrid_tot(1:3)
       write(fh_variables_log, '("#",4X,A,"=",A)') "yn_dc_lcfo",yn_dc_lcfo
+      write(fh_variables_log, '("#",4X,A,"=",A)') "yn_dc_lcfo_diag",yn_dc_lcfo_diag
       write(fh_variables_log, '("#",4X,A,"=",I6)') "nstate_frag",nstate_frag
       write(fh_variables_log, '("#",4X,A,"=",ES12.5)') 'energy_cut', energy_cut
       write(fh_variables_log, '("#",4X,A,"=",ES12.5)') 'lambda_cut', lambda_cut
@@ -2680,6 +2684,7 @@ contains
     call yn_argument_check(yn_spinorbit)
     call yyynnn_argument_check(yn_symmetry)
     call yn_argument_check(yn_dc_lcfo)
+    call yn_argument_check(yn_dc_lcfo_diag)
     
     if(yn_periodic=='n' .and. num_kgrid(1)*num_kgrid(2)*num_kgrid(3)/=1) then
       stop "Nk must be 1 when yn_periodic=='n'"
