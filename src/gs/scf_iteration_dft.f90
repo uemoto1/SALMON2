@@ -214,11 +214,14 @@ DFT_Iteration : do iter=Miter+1,nscf
    end if
    call calc_eigen_energy(energy,spsi,shpsi,sttpsi,system,info,mg,V_local,stencil,srg,ppg)
    call get_band_gap(system,energy,ene_gap)
-   if(calc_mode/='DFT_BAND')then
+   if(calc_mode/='DFT_BAND' .and. yn_dc=='n')then
       select case(iperiodic)
       case(0); call calc_Total_Energy_isolated(system,info,lg,mg,pp,ppg,fg,poisson,rho_s,Vh,Vxc,rion_update,energy)
       case(3); call calc_Total_Energy_periodic(mg,ewald,system,info,pp,ppg,fg,poisson,rion_update,energy)
       end select
+   else if(yn_dc=='y') then
+   ! Divide-and-Conquer method
+      call calc_total_energy_dcdft(mg,system,info,spsi,shpsi,dc,energy)
    end if
    call timer_end(LOG_CALC_TOTAL_ENERGY)
    if(calc_mode=='DFT_BAND')then
@@ -256,7 +259,8 @@ DFT_Iteration : do iter=Miter+1,nscf
    ! DC method
      call convergence_check(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%rho_tot,dc%vloc_tot)
      if(comm_is_root(dc%id_tot)) then
-       write(*,'(a, i6 ,3x , a, 3x, e15.8)') "DC #SCF=",Miter,"diff=",sum1
+       write(*,'(a, i6 ,3x , a, e15.8, 3x, a, e15.8)') &
+       & "DC #SCF = ",Miter,"Total Energy = ",energy%E_tot*au_energy_ev,"diff = ",sum1
      end if
    end if
    

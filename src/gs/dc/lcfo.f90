@@ -500,8 +500,10 @@ contains
             end do ! ix_loc
           end do ! iy_loc
         end do ! ifrag
+        if(dc%id_tot==0) write(*,*) "h_div: done"
         
         call eigen_sx(n, n, h_div, nx, esp_tot(1:n,ispin), v_div, nx)
+        if(dc%id_tot==0) write(*,*) "eigen_sx: done"
         
         do ifrag=1,dc%n_frag
           v_tmp1 = 0d0

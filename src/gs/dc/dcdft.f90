@@ -335,7 +335,7 @@ contains
     
   ! rho_s (total)
     tot_tmp = 0d0
-    if(info%id_rko==0) then
+    if(info%id_rko==0) then ! info%id_rko == 0 : representative process of each fragment
       do ispin=1,nspin
       do iz=1,dc%nxyz_domain(3); iz_tot = dc%jxyz_tot(iz,3)
       do iy=1,dc%nxyz_domain(2); iy_tot = dc%jxyz_tot(iy,2)
@@ -431,7 +431,7 @@ contains
     call calc_ne_each
     wrk1 = 0d0
     wrk2 = 0d0
-    if(info%id_rko==0) then
+    if(info%id_rko==0) then ! info%id_rko == 0 : representative process of each fragment
       wrk1(1:system%no,1:system%nspin,dc%i_frag) = energy%esp(1:system%no,1,1:system%nspin)
       wrk2(1:system%no,1:system%nspin,dc%i_frag) = ne_each(1:system%no,1:system%nspin)
     end if
@@ -582,6 +582,55 @@ contains
     
   END SUBROUTINE ne2mu_dcdft
   
+!===================================================================================================================================
+
+  subroutine calc_total_energy_dcdft(mg,system,info,spsi,shpsi,dc,energy)
+    use structures
+    use communication, only: comm_summation
+    implicit none
+    type(s_rgrid),        intent(in) :: mg
+    type(s_dft_system),   intent(in) :: system
+    type(s_parallel_info),intent(in) :: info
+    type(s_orbital),      intent(in) :: spsi,shpsi
+    type(s_dcdft),        intent(in) :: dc
+    type(s_dft_energy)               :: energy
+    !
+    integer :: ix,iy,iz,ispin,io
+    real(8) :: Etmp,Esum
+
+    Etmp = 0d0
+    do io=info%io_s,info%io_e
+    do ispin=1,system%nspin
+      do iz=mg%is(3),min(mg%ie(3),dc%nxyz_domain(3)) ! core region only
+      do iy=mg%is(2),min(mg%ie(2),dc%nxyz_domain(2)) ! core region only
+      do ix=mg%is(1),min(mg%ie(1),dc%nxyz_domain(1)) ! core region only
+        Etmp = Etmp + system%rocc(io,1,ispin) * spsi%rwf (ix,iy,iz,ispin,io,1,1) &
+                                            & * shpsi%rwf(ix,iy,iz,ispin,io,1,1) * system%hvol
+      end do
+      end do
+      end do
+    end do
+    end do
+    call comm_summation(Etmp,Esum,info%icomm_rko) ! summation in each fragment
+    
+    Etmp = 0d0
+    if(info%id_rko == 0) Etmp = Esum ! info%id_rko == 0 : representative process of each fragment
+    do ispin=1,system%nspin
+    do iz=dc%mg_tot%is(3),dc%mg_tot%ie(3)
+    do iy=dc%mg_tot%is(2),dc%mg_tot%ie(2)
+    do ix=dc%mg_tot%is(1),dc%mg_tot%ie(1)
+      Etmp = Etmp - ( 0.5d0* dc%Vh_tot%f(ix,iy,iz) + dc%Vxc_tot(ispin)%f(ix,iy,iz) ) &
+               & * dc%rho_tot_s(ispin)%f(ix,iy,iz) * system%hvol
+    end do
+    end do
+    end do
+    end do
+    call comm_summation(Etmp,Esum,dc%icomm_tot)
+      
+    energy%E_tot = Esum + energy%E_xc ! + energy%E_ion_ion
+    
+  end subroutine calc_total_energy_dcdft
+
 !===================================================================================================================================
   
   subroutine write_total_dcdft(system,dc)
