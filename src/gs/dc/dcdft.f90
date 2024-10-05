@@ -589,15 +589,20 @@ contains
   
 !===================================================================================================================================
 
-  subroutine calc_kinetic_energy_dcdft(mg,system,info,v_local,spsi,shpsi,sttpsi,dc,energy)
+  subroutine calc_total_energy_dcdft(mg,system,info,v_local,spsi,shpsi,sttpsi,ewald,pp,rion_update,dc,energy)
     use structures
     use communication, only: comm_summation
+    use Total_Energy, only: calc_Total_Energy_periodic
+    use salmon_global, only: kion !!!!!! future work: remove (kion --> system%kion)
     implicit none
     type(s_rgrid),        intent(in) :: mg
     type(s_dft_system),   intent(in) :: system
     type(s_parallel_info),intent(in) :: info
     type(s_scalar)       ,intent(in) :: v_local(system%nspin)
     type(s_orbital),      intent(in) :: spsi,shpsi,sttpsi
+    type(s_ewald_ion_ion),intent(in) :: ewald
+    type(s_pp_info)      ,intent(in) :: pp
+    logical              ,intent(in) :: rion_update
     type(s_dcdft),        intent(in) :: dc
     type(s_dft_energy)               :: energy
     !
@@ -647,7 +652,20 @@ contains
     energy%E_kin = E_sum(1)
     energy%E_ion_nloc = E_sum(2)
     
-  end subroutine calc_kinetic_energy_dcdft
+  ! override (fragment --> total)
+    deallocate(kion)
+    allocate(kion(dc%system_tot%nion))
+    kion = dc%system_tot%kion
+    
+    call calc_Total_Energy_periodic(dc%mg_tot,ewald,dc%system_tot,dc%info_tot,pp,dc%ppg_tot &
+      & ,dc%fg_tot,dc%poisson_tot,rion_update,energy)
+      
+  ! override (total --> fragment)
+    deallocate(kion)
+    allocate(kion(system%nion))
+    kion = system%kion
+    
+  end subroutine calc_total_energy_dcdft
 
 !===================================================================================================================================
   
