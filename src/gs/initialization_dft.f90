@@ -297,9 +297,11 @@ real(8) :: rNe0,rNe
      ewald%yn_bookkeep='n'  !to be input keyword??
   case(3)
      ewald%yn_bookkeep='y'
-     call  init_nion_div(system,lg,mg,info)
+     if(yn_dc=='n') then
+       call init_nion_div(system,lg,mg,info)
+       call init_ewald(system,info,ewald)
+     end if
   end select
-  if(ewald%yn_bookkeep=='y') call init_ewald(system,info,ewald)
 
   call calc_eigen_energy(energy,spsi,shpsi,sttpsi,system,info,mg,V_local,stencil,srg,ppg)
   if(yn_jm=='n') then
@@ -307,12 +309,14 @@ real(8) :: rNe0,rNe
   else
     rion_update = .false.
   end if
+  if(yn_dc=='n') then
   select case(iperiodic)
   case(0)
      call calc_Total_Energy_isolated(system,info,lg,mg,pp,ppg,fg,poisson,rho_s,Vh,Vxc,rion_update,energy)
   case(3)
      call calc_Total_Energy_periodic(mg,ewald,system,info,pp,ppg,fg,poisson,rion_update,energy)
   end select
+  end if
 
 
 end subroutine initialization2_dft

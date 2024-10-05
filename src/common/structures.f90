@@ -483,6 +483,7 @@ module structures
     type(s_dft_system)      :: system_tot
     type(s_parallel_info)   :: info_tot
     type(s_rgrid)           :: lg_tot,mg_tot
+    type(s_pp_grid)         :: ppg_tot
     type(s_reciprocal_grid) :: fg_tot
     type(s_poisson)         :: poisson_tot
     type(s_sendrecv_grid)   :: srg_scalar_tot

@@ -18,14 +18,15 @@ module dcdft
   implicit none
 contains
 
-  subroutine init_dcdft(dc,pp,mixing)
+  subroutine init_dcdft(dc,pp,mixing,ewald)
     use structures
     use salmon_global, only: nproc_k, nproc_ob, nproc_rgrid, nproc_rgrid_tot &
     & , nstate, nelec, yn_dc, nstate_frag
     implicit none
-    type(s_dcdft)  ,intent(inout) :: dc
-    type(s_pp_info),intent(inout) :: pp
-    type(s_mixing) ,intent(inout) :: mixing
+    type(s_dcdft)        ,intent(inout) :: dc
+    type(s_pp_info)      ,intent(inout) :: pp
+    type(s_mixing)       ,intent(inout) :: mixing
+    type(s_ewald_ion_ion),intent(inout) :: ewald
     !
     integer :: nproc_ob_tmp, nproc_rgrid_tmp(3)
     
@@ -53,7 +54,7 @@ contains
   
     subroutine init_total
       use parallelization, only: nproc_group_global, nproc_id_global, nproc_size_global
-      use initialization_sub, only: init_dft
+      use initialization_sub, only: init_dft, init_nion_div
       use sendrecv_grid, only: dealloc_cache
       use mixing_sub, only: init_mixing
       use salmon_pp, only: read_pslfile
@@ -61,9 +62,9 @@ contains
       use salmon_global, only: num_fragment, nelec, base_directory, method_init_density
       use filesystem, only: atomic_create_directory
       use read_gs, only: read_dns_cube
+      use Total_Energy, only: init_ewald
       implicit none
       integer :: i
-      type(s_pp_grid) :: ppg_tmp
       type(s_stencil) :: stencil_dummy
       type(s_sendrecv_grid) :: srg_dummy
       type(s_ofile) :: ofile_dummy
@@ -105,12 +106,16 @@ contains
     ! Vpsl
       call read_pslfile(dc%system_tot,pp)
       call init_ps(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%fg_tot,dc%poisson_tot, &
-      & pp,ppg_tmp,dc%vpsl_tot)
+      & pp,dc%ppg_tot,dc%vpsl_tot)
       
       if(method_init_density=='read_dns_cube') then
       ! read the initial density for the total system
         call read_dns_cube(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot,dc%rho_tot,dc%rho_tot_s)
       end if
+      
+    ! Ewald
+      call init_nion_div(dc%system_tot,dc%lg_tot,dc%mg_tot,dc%info_tot)
+      call init_ewald(dc%system_tot,dc%info_tot,ewald)
     
     end subroutine init_total
   
@@ -584,52 +589,65 @@ contains
   
 !===================================================================================================================================
 
-  subroutine calc_total_energy_dcdft(mg,system,info,spsi,shpsi,dc,energy)
+  subroutine calc_kinetic_energy_dcdft(mg,system,info,v_local,spsi,shpsi,sttpsi,dc,energy)
     use structures
     use communication, only: comm_summation
     implicit none
     type(s_rgrid),        intent(in) :: mg
     type(s_dft_system),   intent(in) :: system
     type(s_parallel_info),intent(in) :: info
-    type(s_orbital),      intent(in) :: spsi,shpsi
+    type(s_scalar)       ,intent(in) :: v_local(system%nspin)
+    type(s_orbital),      intent(in) :: spsi,shpsi,sttpsi
     type(s_dcdft),        intent(in) :: dc
     type(s_dft_energy)               :: energy
     !
-    integer :: ix,iy,iz,ispin,io
-    real(8) :: Etmp,Esum
-
-    Etmp = 0d0
+    integer :: ispin,io
+    integer,dimension(3) :: is,ie
+    real(8) :: E_tmp,E_local(2),E_sum(2)
+    
+    is(1:3) = mg%is(1:3)
+    ie(1:3) = min(mg%ie(1:3),dc%nxyz_domain(1:3)) ! core region only
+    
+  ! kinetic energy (E_kin)
+    E_tmp = 0d0
+    do ispin=1,system%Nspin
     do io=info%io_s,info%io_e
-    do ispin=1,system%nspin
-      do iz=mg%is(3),min(mg%ie(3),dc%nxyz_domain(3)) ! core region only
-      do iy=mg%is(2),min(mg%ie(2),dc%nxyz_domain(2)) ! core region only
-      do ix=mg%is(1),min(mg%ie(1),dc%nxyz_domain(1)) ! core region only
-        Etmp = Etmp + system%rocc(io,1,ispin) * spsi%rwf (ix,iy,iz,ispin,io,1,1) &
-                                            & * shpsi%rwf(ix,iy,iz,ispin,io,1,1) * system%hvol
-      end do
-      end do
-      end do
+      E_tmp = E_tmp + system%rocc(io,1,ispin) &
+                  * sum(  spsi%rwf(is(1):ie(1),is(2):ie(2),is(3):ie(3),ispin,io,1,1) &
+                      * sttpsi%rwf(is(1):ie(1),is(2):ie(2),is(3):ie(3),ispin,io,1,1) ) * system%Hvol
     end do
     end do
-    call comm_summation(Etmp,Esum,info%icomm_rko) ! summation in each fragment
+    E_local(1) = E_tmp
+
+  ! nonlocal part (E_ion_nloc)
+    E_tmp = 0d0
+    do ispin=1,system%Nspin
+    do io=info%io_s,info%io_e
+      E_tmp = E_tmp + system%rocc(io,1,ispin) * system%hvol &
+        * sum( spsi%rwf(is(1):ie(1),is(2):ie(2),is(3):ie(3),ispin,io,1,1) &
+           * (shpsi%rwf(is(1):ie(1),is(2):ie(2),is(3):ie(3),ispin,io,1,1) &
+          - (sttpsi%rwf(is(1):ie(1),is(2):ie(2),is(3):ie(3),ispin,io,1,1) &
+     + V_local(ispin)%f(is(1):ie(1),is(2):ie(2),is(3):ie(3)) &
+             * spsi%rwf(is(1):ie(1),is(2):ie(2),is(3):ie(3),ispin,io,1,1) &
+            ) &
+          ) &
+        )
+    end do
+    end do
+    E_local(2) = E_tmp
     
-    Etmp = 0d0
-    if(info%id_rko == 0) Etmp = Esum ! info%id_rko == 0 : representative process of each fragment
-    do ispin=1,system%nspin
-    do iz=dc%mg_tot%is(3),dc%mg_tot%ie(3)
-    do iy=dc%mg_tot%is(2),dc%mg_tot%ie(2)
-    do ix=dc%mg_tot%is(1),dc%mg_tot%ie(1)
-      Etmp = Etmp - ( 0.5d0* dc%Vh_tot%f(ix,iy,iz) + dc%Vxc_tot(ispin)%f(ix,iy,iz) ) &
-               & * dc%rho_tot_s(ispin)%f(ix,iy,iz) * system%hvol
-    end do
-    end do
-    end do
-    end do
-    call comm_summation(Etmp,Esum,dc%icomm_tot)
+  ! summation in each fragment
+    call comm_summation(E_local,E_sum,2,info%icomm_rko)
+    
+  ! summation over the total system
+    E_local = 0d0
+    if(info%id_rko == 0) E_local = E_sum ! info%id_rko == 0 : representative process of each fragment
+    call comm_summation(E_local,E_sum,2,dc%icomm_tot)
       
-    energy%E_tot = Esum + energy%E_xc ! + energy%E_ion_ion
+    energy%E_kin = E_sum(1)
+    energy%E_ion_nloc = E_sum(2)
     
-  end subroutine calc_total_energy_dcdft
+  end subroutine calc_kinetic_energy_dcdft
 
 !===================================================================================================================================
   

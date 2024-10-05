@@ -221,7 +221,9 @@ DFT_Iteration : do iter=Miter+1,nscf
       end select
    else if(yn_dc=='y') then
    ! Divide-and-Conquer method
-      call calc_total_energy_dcdft(mg,system,info,spsi,shpsi,dc,energy)
+      call calc_kinetic_energy_dcdft(mg,system,info,v_local,spsi,shpsi,sttpsi,dc,energy)
+      call calc_Total_Energy_periodic(dc%mg_tot,ewald,dc%system_tot,dc%info_tot,pp,dc%ppg_tot &
+      & ,dc%fg_tot,dc%poisson_tot,rion_update,energy)
    end if
    call timer_end(LOG_CALC_TOTAL_ENERGY)
    if(calc_mode=='DFT_BAND')then
