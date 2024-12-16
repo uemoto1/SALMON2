@@ -99,7 +99,7 @@ contains
 !===================================================================================================================================
 
   !! export SYSNAME_tm.data, SYSNAME_sigma.data, SYSNAME_epsilon.data file
-  subroutine write_tm_data(tpsi,system,info,mg,stencil,srg,ppg,energy,yn_ikr)
+  subroutine write_tm_data(tpsi,system,info,mg,stencil,srg,ppg,energy)
     use structures
     use stencil_sub
     use sendrecv_grid
@@ -118,9 +118,7 @@ contains
     type(s_sendrecv_grid),intent(inout) :: srg
     type(s_pp_grid),intent(in) :: ppg
     type(s_orbital)       :: tpsi
-    type(s_orbital)       :: tpsi_backup
     type(s_dft_energy) :: energy
-    character(1),intent(in) :: yn_ikr
     !
     logical :: flag_print_tm, flag_print_eps
     integer :: fh_tm, narray
@@ -145,7 +143,6 @@ contains
     complex(8) :: sigma_l,sigma_intra_l
     character(256) :: filename
     integer,parameter :: fh_s=333,fh_e=777
-    complex(8),allocatable :: expikr(:,:,:,:)
 
     flag_print_tm = .false.
     flag_print_eps= .false.
@@ -201,39 +198,6 @@ contains
     ie = mg%ie
 
     Nlma = ppg%Nlma
-
-    if(yn_ikr=='y')then
-       if(.not. allocated(tpsi_backup%zwf)) then
-         call allocate_orbital_complex(system%nspin,mg,info,tpsi_backup)
-       end if
-       tpsi_backup%zwf(:,:,:,:,:,:,:) = tpsi%zwf(:,:,:,:,:,:,:)
-   
-       allocate(expikr(is(1):ie(1),is(2):ie(2),is(3):ie(3),ik_s:ik_e))
-       do ik=ik_s,ik_e
-         do iz=is(3),ie(3)
-         do iy=is(2),ie(2)
-         do ix=is(1),ie(1)
-           expikr(ix,iy,iz,ik) = exp(zi*(system%vec_k(1,ik)*dble(ix-1)*system%Hgs(1) &
-                                        +system%vec_k(2,ik)*dble(iy-1)*system%Hgs(2) &
-                                        +system%vec_k(3,ik)*dble(iz-1)*system%Hgs(3)))
-         end do
-         end do
-         end do
-       end do
-   
-       do ik=ik_s,ik_e
-         do ib=io_s,io_e
-           do iz=is(3),ie(3)
-           do iy=is(2),ie(2)
-           do ix=is(1),ie(1)
-             tpsi%zwf(ix,iy,iz,ispin,ib,ik,im) = expikr(ix,iy,iz,ik) * tpsi%zwf(ix,iy,iz,ispin,ib,ik,im)
-           end do
-           end do
-           end do
-         end do
-       end do
-       deallocate(expikr)
-    end if
 
     !calculate <u_nk|p_j|u_mk>  (j=x,y,z)
 
@@ -406,11 +370,7 @@ contains
        deallocate(u_rVnl_Vnlr_u_all_l)
 
 
-       if(yn_ikr=='n')then
-          file_tm_data = trim(base_directory)//trim(sysname)//'_tm.data'
-       else if(yn_ikr=='y')then
-          file_tm_data = trim(base_directory)//trim(sysname)//'_tm_ikr.data'
-       end if
+       file_tm_data = trim(base_directory)//trim(sysname)//'_tm.data'
 
        if (comm_is_root(nproc_id_global)) then
           write(*,*) "  printing transition moment ....."
@@ -585,11 +545,6 @@ contains
        close(fh_e)
 
     endif
-
-    if(yn_ikr=='y')then
-       tpsi%zwf(:,:,:,:,:,:,:) = tpsi_backup%zwf(:,:,:,:,:,:,:)
-       call deallocate_orbital(tpsi_backup)
-    end if
 
     call comm_sync_all
     return
