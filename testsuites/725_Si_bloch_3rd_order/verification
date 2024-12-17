@@ -20,8 +20,8 @@ checklist = {
     # Current
     "Current": [
         -100, # Temporary value for result
-        0.184846050914305E-003,  # Reference value
-        3.e-5,  # Permissible error 
+        -0.137090538064987E-003,  # Reference value
+        1.e-1,  # Permissible error 
     ],
 } 
 

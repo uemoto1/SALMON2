@@ -19,12 +19,8 @@ module gs_info_ssbe
         complex(8), allocatable :: p_mod_matrix(:, :, :, :)
         ! p_tm_matrix = <u|p|u>
         complex(8), allocatable :: p_tm_matrix(:, :, :, :)
-        ! p_tm_ikr_matrix = <psi|p|psi>
-        complex(8), allocatable :: p_tm_ikr_matrix(:, :, :, :)
         ! rvnl_tm_matrix = <u|-i[r, Vnl]|u>
         complex(8), allocatable :: rvnl_tm_matrix(:, :, :, :)
-        ! rvnl_tm_matrix = <psi|-i[r, Vnl]|psi>
-        complex(8), allocatable :: rvnl_tm_ikr_matrix(:, :, :, :)
         complex(8), allocatable :: d_matrix(:, :, :, :)
 
         !k-space grid and geometry information
@@ -69,9 +65,7 @@ subroutine init_sbe_gs_info(gs, sysname, gs_directory, nk, nb, ne, a1, a2, a3, r
     allocate(gs%p_mod_matrix(1:nb, 1:nb, 1:3, 1:nk))
     allocate(gs%d_matrix(1:nb, 1:nb, 1:3, 1:nk))
     allocate(gs%p_tm_matrix(1:nb, 1:nb, 1:3, 1:nk))
-    allocate(gs%p_tm_ikr_matrix(1:nb, 1:nb, 1:3, 1:nk))
     allocate(gs%rvnl_tm_matrix(1:nb, 1:nb, 1:3, 1:nk))
-    allocate(gs%rvnl_tm_ikr_matrix(1:nb, 1:nb, 1:3, 1:nk))
 
     if (irank == 0) then
         if (read_bin) then
@@ -88,7 +82,6 @@ subroutine init_sbe_gs_info(gs, sysname, gs_directory, nk, nb, ne, a1, a2, a3, r
             !Retrieve transition matrix from 'SYSNAME_tm.data':
             write(*, '(a)') "# read_tm_data"
             call read_tm_data()
-            call read_tm_ikr_data()
             !Export all data from binray
             write(*, '(a)') "# save_sbe_gs_bin"
             call save_sbe_gs_bin()
@@ -100,9 +93,7 @@ subroutine init_sbe_gs_info(gs, sysname, gs_directory, nk, nb, ne, a1, a2, a3, r
     call comm_bcast(gs%eigen, icomm, 0)
     call comm_bcast(gs%occup, icomm, 0)
     call comm_bcast(gs%p_tm_matrix, icomm, 0)
-    call comm_bcast(gs%p_tm_ikr_matrix, icomm, 0)
     call comm_bcast(gs%rvnl_tm_matrix, icomm, 0)
-    call comm_bcast(gs%rvnl_tm_ikr_matrix, icomm, 0)
 
     !Calculate omega and d_matrix (neglecting diagonal part):
     if (irank == 0) write(*,"(a)") "# prepare_matrix"
@@ -239,51 +230,6 @@ contains
 
         close(fh)
     end subroutine read_tm_data
-
-
-    ! Read transition dipole moment from SALMON's output file
-    subroutine read_tm_ikr_data()
-        implicit none
-        character(256) :: dummy
-        integer :: fh, i, ik, ib, jb, iik, iib, jjb
-        real(8) :: tmp(1:6)
-
-
-        fh = open_filehandle(trim(gs_directory) // trim(sysname) // '_tm_ikr.data', 'old')
-        read(fh, "(a)") dummy; write(*, "('#>',4x,a)") trim(dummy)
-        read(fh, "(a)") dummy; write(*, "('#>',4x,a)") trim(dummy)
-        read(fh, "(a)") dummy; write(*, "('#>',4x,a)") trim(dummy)
-        do ik = 1, nk
-            do ib = 1, nb
-                do jb = 1, nb
-                    read(fh, *) iik, iib, jjb, tmp(1:6)
-                    if (ik .ne. iik) stop "ik mismatch"
-                    if (ib .ne. iib) stop "ib mismatch"
-                    if (jb .ne. jjb) stop "jb mismatch"
-                    gs%p_tm_ikr_matrix(ib, jb, 1, ik) = dcmplx(tmp(1), tmp(2))
-                    gs%p_tm_ikr_matrix(ib, jb, 2, ik) = dcmplx(tmp(3), tmp(4))
-                    gs%p_tm_ikr_matrix(ib, jb, 3, ik) = dcmplx(tmp(5), tmp(6))
-                end do
-            end do
-        end do
-        read(fh, "(a)") dummy; write(*, "('#>',4x,a)") trim(dummy)
-        do ik = 1, nk
-            do ib = 1, nb
-                do jb = 1, nb
-                    read(fh, *) iik, iib, jjb, tmp(1:6)
-                    if (ik .ne. iik) stop "ik mismatch"
-                    if (ib .ne. iib) stop "ib mismatch"
-                    if (jb .ne. jjb) stop "jb mismatch"
-                    gs%rvnl_tm_ikr_matrix(ib, jb, 1, ik) = dcmplx(tmp(1), tmp(2))
-                    gs%rvnl_tm_ikr_matrix(ib, jb, 2, ik) = dcmplx(tmp(3), tmp(4))
-                    gs%rvnl_tm_ikr_matrix(ib, jb, 3, ik) = dcmplx(tmp(5), tmp(6))
-                end do
-            end do
-        end do
-
-        close(fh)
-    end subroutine read_tm_ikr_data
-
 
 
     subroutine read_sbe_gs_bin()
