@@ -84,7 +84,7 @@ contains
       call diag_lapack
 #endif
       if(dc%id_tot==0) write(*,*) "diagonalization: done"
-      call test_write_psi !!!!!!!!! test_lcfo
+!      call test_write_psi
     end if
   
     call output
@@ -610,22 +610,23 @@ contains
     end subroutine output
     
 !+++++++++++++++++
-    subroutine test_write_psi !!!!!!!!! test_lcfo
+    subroutine test_write_psi
       use salmon_global, only: natom, kion, rion, base_directory
       use write_file3d
       implicit none
-      character(60) :: suffix='./psi_test1025'
+      character(60) :: suffix='./psi_test'
       character(30) :: phys_quantity='psi'
       real(8),dimension(dc%lg_tot%num(1),dc%lg_tot%num(2),dc%lg_tot%num(3)) :: wrk1,wrk2
       integer :: ix_tot,iy_tot,iz_tot
+      integer,parameter :: io_out=1025
       character(256) :: dir_tmp
       
-      if(n_mat(1) < 1025) return
+      if(n_mat(1) < io_out) return
 
       wrk1 = 0d0
       if(dc%id_frag==0) then
         ispin = 1
-        io = 1025
+        io = io_out
         jfrag = dc%i_frag
         do jo=1,n_basis(jfrag,ispin) ; j = index_basis(jo,jfrag,ispin)
         do iz=1,dc%nxyz_domain(3); iz_tot = dc%jxyz_tot(iz,3)
@@ -659,7 +660,7 @@ contains
       rion = system%rion
       base_directory = dir_tmp
 
-    end subroutine test_write_psi !!!!!!!!! test_lcfo
+    end subroutine test_write_psi
 !++++++++++++++++
   
   end subroutine dc_lcfo
