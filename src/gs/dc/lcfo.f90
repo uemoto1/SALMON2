@@ -693,7 +693,7 @@ contains
     nstate_tot = 0 ! initial
     
     if(comm_is_root(info%id_rko)) then
-      write(*,*) "TDDFT & yn_dc==y : conventional TDDFT but wavefunctions are reconstructed from DC-LCFO data"
+      write(*,*) "yn_conventional_from_dcdft==y : conventional calculation but wavefunctions are reconstructed from DC-LCFO data"
       write(*,*) "read from ./data_dcdft directory"
     end if
     
@@ -768,13 +768,23 @@ contains
       end if
       call comm_summation(wrk1,wrk2,product(lg%num(1:3)),info%icomm_rko)
       if(info%io_s <= io .and. io <= info%io_e) then
-        do iz=mg%is(3),mg%ie(3)
-        do iy=mg%is(2),mg%ie(2)
-        do ix=mg%is(1),mg%ie(1)
-          spsi%zwf(ix,iy,iz,ispin,io,1,1) = dcmplx(wrk2(ix,iy,iz))
-        end do
-        end do
-        end do        
+        if(allocated(spsi%rwf)) then
+          do iz=mg%is(3),mg%ie(3)
+          do iy=mg%is(2),mg%ie(2)
+          do ix=mg%is(1),mg%ie(1)
+            spsi%rwf(ix,iy,iz,ispin,io,1,1) = wrk2(ix,iy,iz)
+          end do
+          end do
+          end do
+        else if(allocated(spsi%zwf)) then
+          do iz=mg%is(3),mg%ie(3)
+          do iy=mg%is(2),mg%ie(2)
+          do ix=mg%is(1),mg%ie(1)
+            spsi%zwf(ix,iy,iz,ispin,io,1,1) = dcmplx(wrk2(ix,iy,iz))
+          end do
+          end do
+          end do
+        end if
       end if
     end do
     end do
