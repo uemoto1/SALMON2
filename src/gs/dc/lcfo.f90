@@ -667,7 +667,7 @@ contains
 
 !===================================================================================================================================
 
-! yn_conventional_from_dcdft==y : conventional TDDFT but wavefunctions are reconstructed from DC-LCFO data
+! yn_conventional_from_dcdft==y : conventional calculation but wavefunctions are reconstructed from DC-LCFO data
   subroutine init_conventional_from_dcdft(lg,mg,system,info,spsi)
     use communication, only: comm_is_root, comm_summation, comm_bcast
     use filesystem, only: get_filehandle
@@ -693,12 +693,13 @@ contains
     nstate_tot = 0 ! initial
     
     if(comm_is_root(info%id_rko)) then
+      write(*,*) "start init_conventional_from_dcdft"
       write(*,*) "yn_conventional_from_dcdft==y : conventional calculation but wavefunctions are reconstructed from DC-LCFO data"
       write(*,*) "read from ./data_dcdft directory"
     end if
     
   ! read fragment data ./data_dcdft/fragments/*/*.bin
-    if(info%isize_rko < n_frag) stop "yn_dc=y: MPI size is too small."
+    if(info%isize_rko < n_frag) stop "yn_conventional_from_dcdft=y: MPI size is too small."
     n = info%isize_rko / n_frag
     jfrag = -1
     do j=1,n_frag
@@ -788,6 +789,10 @@ contains
       end if
     end do
     end do
+
+    if(comm_is_root(info%id_rko)) then
+      write(*,*) "end init_conventional_from_dcdft"
+    end if
     
     if(jfrag > 0) deallocate(n_mat,n_basis,index_basis,jxyz_tot,coef_wf,f_basis)
     deallocate(wrk1,wrk2)
