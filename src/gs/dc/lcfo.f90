@@ -22,7 +22,7 @@ module lcfo
   implicit none
   
   private
-  public :: dc_lcfo, restart_rt_from_data_dcdft
+  public :: dc_lcfo, init_conventional_from_dcdft
   
   character(32),parameter :: binfile_wf = "wavefunctions.bin", &
   &                          binfile_rg = "rgrid_index.bin", &
@@ -667,8 +667,8 @@ contains
 
 !===================================================================================================================================
 
-! TDDFT & yn_dc==y : conventional TDDFT but wavefunctions are reconstructed from DC-LCFO data
-  subroutine restart_rt_from_data_dcdft(lg,mg,system,info,spsi)
+! yn_conventional_from_dcdft==y : conventional TDDFT but wavefunctions are reconstructed from DC-LCFO data
+  subroutine init_conventional_from_dcdft(lg,mg,system,info,spsi)
     use communication, only: comm_is_root, comm_summation, comm_bcast
     use filesystem, only: get_filehandle
     use salmon_global,only: num_fragment
@@ -781,6 +781,6 @@ contains
     
     if(jfrag > 0) deallocate(n_mat,n_basis,index_basis,jxyz_tot,coef_wf,f_basis)
     deallocate(wrk1,wrk2)
-  end subroutine restart_rt_from_data_dcdft
+  end subroutine init_conventional_from_dcdft
   
 end module lcfo

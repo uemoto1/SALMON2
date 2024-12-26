@@ -211,7 +211,8 @@ contains
       & theory, &
       & yn_md,  &
       & yn_opt, &
-      & yn_dc
+      & yn_dc, &
+      & yn_conventional_from_dcdft
 
     namelist/control/ &
       & sysname, &
@@ -637,6 +638,7 @@ contains
     yn_md               = 'n'
     yn_opt              = 'n'
     yn_dc               = 'n'
+    yn_conventional_from_dcdft = 'n'
 !! == default for &control
     sysname               = 'default'
     base_directory        = './'
@@ -1143,6 +1145,7 @@ contains
     call comm_bcast(yn_md              ,nproc_group_global)
     call comm_bcast(yn_opt             ,nproc_group_global)
     call comm_bcast(yn_dc              ,nproc_group_global)
+    call comm_bcast(yn_conventional_from_dcdft,nproc_group_global)
 
 !! == bcast for &control
     call comm_bcast(sysname         ,nproc_group_global)
@@ -2020,6 +2023,7 @@ contains
       write(fh_variables_log, '("#",4X,A,"=",A)') 'yn_md', yn_md
       write(fh_variables_log, '("#",4X,A,"=",A)') 'yn_opt', yn_opt
       write(fh_variables_log, '("#",4X,A,"=",A)') 'yn_dc', yn_dc
+      write(fh_variables_log, '("#",4X,A,"=",A)') 'yn_conventional_from_dcdft', yn_conventional_from_dcdft
 
       if(inml_control >0)ierr_nml = ierr_nml +1
       write(fh_variables_log, '("#namelist: ",A,", status=",I3)') 'control', inml_control
@@ -2623,6 +2627,7 @@ contains
     call yn_argument_check(yn_md)
     call yn_argument_check(yn_opt)
     call yn_argument_check(yn_dc)
+    call yn_argument_check(yn_conventional_from_dcdft)
     call yn_argument_check(yn_restart)
     call yn_argument_check(yn_self_checkpoint)
     call yn_argument_check(yn_reset_step_restart)
@@ -2888,6 +2893,8 @@ contains
     end if
     
     if(yn_dc=='y') then
+      if(theory/='dft') stop "DC method (yn_dc=y): theory must be dft"
+      if(yn_conventional_from_dcdft=='y') stop "contradiction: yn_dc=y & yn_conventional_from_dcdft=y"
       if(iflag_atom_coor/=ntype_atom_coor_cartesian) stop "DC method (yn_dc=y): use cartesian coordinate."
       !if(temperature < 0d0) stop "DC method (yn_dc=y): temperature must be specified."
       if(num_fragment(1)*num_fragment(2)*num_fragment(3) == 0) &
@@ -2902,7 +2909,6 @@ contains
       if(yn_jm=='y') stop "DC method (yn_dc=y): yn_jm=y is not supported."
       if(base_directory /= './') stop "DC method (yn_dc=y): base_directory must be default."
       if(nproc_k/=1) stop "DC method (yn_dc=y): nproc_k must be 1 for both the total system and fragments."
-      !!!!! if(write_gs_restart_data/='wfn') stop ! future work
     end if
 
 #ifdef USE_FFTW
