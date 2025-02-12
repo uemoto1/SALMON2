@@ -196,7 +196,7 @@ DFT_Iteration : do iter=Miter+1,nscf
      call calc_rho_total_dcdft(system%nspin,lg,mg,info,rho_s,dc)
      ! mixing & local KS potential (total system)
      call update_density_and_potential(dc%lg_tot,dc%mg_tot,dc%system_tot,dc%info_tot, &
-     & stencil,xc_func,ppn,iter, &
+     & stencil,xc_func,pp,ppn,iter, &
      & spsi,srg,srg_scalar, & ! dummy
      & dc%poisson_tot,dc%fg_tot,dc%rho_tot,dc%rho_tot_s, &
      & rho_jm, & ! dummy
