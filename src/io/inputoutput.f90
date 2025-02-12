@@ -586,8 +586,8 @@ contains
       & nstate_sbe, &
       & nelec_sbe, &
       & al_sbe, &
-<<<<<<< HEAD
-      & al_vec1_sbe,al_vec2_sbe,al_vec3_sbe
+      & al_vec1_sbe,al_vec2_sbe,al_vec3_sbe, &
+      & norder_correction
       
     namelist/dc/ &
       & num_fragment, &
@@ -598,10 +598,6 @@ contains
       & nstate_frag, &
       & energy_cut, &
       & lambda_cut
-=======
-      & al_vec1_sbe,al_vec2_sbe,al_vec3_sbe, &
-      & norder_correction
->>>>>>> f56cc9358064fd29908e6e99415e7fcd95e7d44a
 
 !! == default for &unit ==
     unit_system='au'
@@ -1011,7 +1007,7 @@ contains
     al_vec1_sbe(:,:) = 0.d0
     al_vec2_sbe(:,:) = 0.d0
     al_vec3_sbe(:,:) = 0.d0
-<<<<<<< HEAD
+    norder_correction = 0
 !! == default for &dc
     num_fragment = 0
     num_rgrid_buffer = 0
@@ -1021,9 +1017,6 @@ contains
     nstate_frag = 0
     energy_cut = 0d0
     lambda_cut = 1d-3
-=======
-    norder_correction = 0
->>>>>>> f56cc9358064fd29908e6e99415e7fcd95e7d44a
 
     if (comm_is_root(nproc_id_global)) then
       fh_namelist = get_filehandle()
@@ -1636,7 +1629,7 @@ contains
     al_vec1_sbe = al_vec1_sbe * ulength_to_au
     al_vec2_sbe = al_vec2_sbe * ulength_to_au
     al_vec3_sbe = al_vec3_sbe * ulength_to_au
-<<<<<<< HEAD
+    call comm_bcast(norder_correction,nproc_group_global)
 !! == bcast for dc
     call comm_bcast(num_fragment ,nproc_group_global)
     call comm_bcast(num_rgrid_buffer, nproc_group_global)
@@ -1647,9 +1640,6 @@ contains
     call comm_bcast(energy_cut, nproc_group_global)
     energy_cut = energy_cut * uenergy_to_au
     call comm_bcast(lambda_cut, nproc_group_global)
-=======
-    call comm_bcast(norder_correction,nproc_group_global)
->>>>>>> f56cc9358064fd29908e6e99415e7fcd95e7d44a
   end subroutine read_input_common
 
   subroutine read_atomic_coordinates
