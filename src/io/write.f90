@@ -1905,7 +1905,7 @@ contains
   end subroutine write_band_information
   
 !===================================================================================================================================
-  subroutine init_projection(system,lg,mg,info,stencil,Vpsl,xc_func,ppn,fg,poisson,srg_scalar,rt,energy,ofl)
+  subroutine init_projection(system,lg,mg,info,stencil,Vpsl,xc_func,pp,ppn,fg,poisson,srg_scalar,rt,energy,ofl)
     use structures
     use communication, only: comm_is_root
     use parallelization, only: nproc_id_global
@@ -1920,6 +1920,7 @@ contains
     type(s_stencil)         ,intent(in) :: stencil
     type(s_scalar)          ,intent(in) :: Vpsl
     type(s_xc_functional)   ,intent(in) :: xc_func
+    type(s_pp_info)         ,intent(in) :: pp
     type(s_pp_nlcc)         ,intent(in) :: ppn
     type(s_reciprocal_grid) ,intent(in) :: fg
     type(s_poisson)                     :: poisson
@@ -2065,7 +2066,7 @@ contains
       end do
       call hartree(lg,mg,rt%info_proj,rt%system_proj,fg,poisson,srg_scalar,stencil,rho,Vh)
       call exchange_correlation(rt%system_proj,xc_func,mg,srg_scalar,rt%srg_proj,rho_s &
-      & ,ppn,rt%info_proj,rt%tpsi0,stencil,Vxc,E_xc)
+      & ,pp,ppn,rt%info_proj,rt%tpsi0,stencil,Vxc,E_xc)
       call update_vlocal(mg,system%nspin,Vh,Vpsl,Vxc,rt%vloc0)
       
       call deallocate_scalar(rho)

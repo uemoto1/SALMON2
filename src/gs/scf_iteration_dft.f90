@@ -179,7 +179,7 @@ DFT_Iteration : do iter=Miter+1,nscf
      call timer_begin(LOG_CALC_RHO)
      call calc_density(system,rho_s,spsi,info,mg)
      call timer_end(LOG_CALC_RHO)
-     call update_density_and_potential(lg,mg,system,info,stencil,xc_func,ppn,iter, &
+     call update_density_and_potential(lg,mg,system,info,stencil,xc_func,pp,ppn,iter, &
                spsi,srg,srg_scalar,poisson,fg,rho,rho_s,rho_jm,Vpsl,Vh,Vxc,v_local,mixing,energy)
    else if(yn_dc=='y') then
    ! Divide-and-Conquer method
