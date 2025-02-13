@@ -698,7 +698,7 @@ contains
       write(*,*) "read from ./data_dcdft directory"
     end if
     
-  ! read fragment data ./data_dcdft/fragments/*/*.bin
+  ! read fragment data ./data_dcdft/fragments/000001, 000002, ...  
     if(info%isize_rko < n_frag) stop "yn_conventional_from_dcdft=y: MPI size is too small."
     n = info%isize_rko / n_frag
     jfrag = -1
