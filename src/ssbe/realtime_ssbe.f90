@@ -38,6 +38,15 @@ subroutine main_realtime_ssbe(icomm)
     ! Initialization of SBE solver and density matrix:
     call init_sbe_bloch_solver(sbe, gs, nstate_sbe(1), icomm)
     sbe%flag_vnl_correction = (yn_vnl_correction == 'y')
+    if (norder_correction >= 1) then
+        call prepare_first_order_correction(sbe, gs, icomm)
+        if (irank == 0) then
+            write(*,'(a)') '# experimental first-order adiabatic correction tensor'
+            do i = 1, 3
+                write(*,'(3es24.15)') sbe%corr1_tensor(i, 1:3)
+            end do
+        end if
+    end if
 
     ! Prepare external pulse
     allocate(Ac_ext_t(1:3, -1:nt+1))

@@ -119,6 +119,12 @@ subroutine main_multiscale_ssbe(icomm)
             call init_sbe_bloch_solver(sbe(i), gs(itbl_macro_itype_sbe(i)), &
                                        nstate_sbe(itbl_macro_itype_sbe(i)), icomm_macro)
             sbe(i)%flag_vnl_correction = (yn_vnl_correction == 'y')
+            if (norder_correction >= 1) then
+                ! NOTE: not yet optimal -- identical tensors are recomputed for
+                ! every macropoint of the same material type.
+                call prepare_first_order_correction(sbe(i), &
+                                                    gs(itbl_macro_itype_sbe(i)), icomm_macro)
+            end if
         end do
     end if
 

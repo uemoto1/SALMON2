@@ -13,6 +13,10 @@ module bloch_solver_ssbe
         integer :: ik_max, ik_min
         complex(8), allocatable :: rho(:, :, :)
         logical :: flag_vnl_correction
+        ! First-order adiabatic current correction tensor. This is
+        ! precomputed from the initial occupations and the same velocity
+        ! matrix used by the SBE Hamiltonian/current.
+        real(8) :: corr1_tensor(1:3, 1:3)
     end type
 
 
@@ -53,7 +57,75 @@ subroutine init_sbe_bloch_solver(sbe, gs, nb_sbe, icomm)
     end do
 
     sbe%flag_vnl_correction = .false.
+    sbe%corr1_tensor(:, :) = 0d0
 end subroutine
+
+
+!Precompute the first-order adiabatic (finite-basis) current correction tensor.
+!
+!    corr1_tensor(a,b) = [ N_e delta_ab - S(a,b) ] / volume,
+!    S(a,b) = sum_k w_k sum_{n in occ} sum_{i /= n}
+!                 2 f_n Re[ v_ni(b) v_in(a) ] / (eps_i - eps_n) / sum_k w_k
+!
+!S(a,b) is the truncated Thomas-Reiche-Kuhn sum; it approaches N_e delta_ab as the
+!band space becomes complete, so corr1_tensor vanishes in that limit.  The residual
+!at finite band number is exactly the spurious linear current left by the
+!incomplete paramagnetic/diamagnetic cancellation, and calc_current_bloch()
+!subtracts corr1_tensor * Ac to remove it.
+!
+!Must be called AFTER sbe%flag_vnl_correction has been set by the caller, since
+!the velocity operator used here has to match the one used by the propagation.
+subroutine prepare_first_order_correction(sbe, gs, icomm)
+    use communication
+    implicit none
+    type(s_sbe_bloch_solver), intent(inout) :: sbe
+    type(s_sbe_gs_info), intent(in) :: gs
+    integer, intent(in) :: icomm
+    integer :: ik, ib, nb, idir, jdir
+    real(8) :: corr_local(1:3, 1:3), corr_global(1:3, 1:3)
+    real(8) :: trace_local, trace_global, wsum, fn, de
+    complex(8) :: vni(1:3), vin(1:3)
+
+    corr_local(:, :) = 0d0
+    trace_local = 0d0
+    do ik = sbe%ik_min, sbe%ik_max
+        do nb = 1, min(gs%ne/2, sbe%nb)
+            fn = gs%occup(nb, ik)
+            trace_local = trace_local + gs%kweight(ik) * fn
+            do ib = 1, sbe%nb
+                if (ib == nb) cycle
+                de = gs%delta_omega(ib, nb, ik)
+                if (abs(de) <= 1.d-3) cycle
+                vni(:) = gs%p_tm_matrix(nb, ib, :, ik)
+                vin(:) = gs%p_tm_matrix(ib, nb, :, ik)
+                if (sbe%flag_vnl_correction) then
+                    vni(:) = vni(:) + gs%rvnl_tm_matrix(nb, ib, :, ik)
+                    vin(:) = vin(:) + gs%rvnl_tm_matrix(ib, nb, :, ik)
+                end if
+                do idir = 1, 3
+                    do jdir = 1, 3
+                        corr_local(idir, jdir) = corr_local(idir, jdir) &
+                            & - 2d0 * gs%kweight(ik) * fn &
+                            & * dble(vni(jdir) * vin(idir)) / de
+                    end do
+                end do
+            end do
+        end do
+    end do
+
+    call comm_summation(corr_local, corr_global, 9, icomm)
+    call comm_summation(trace_local, trace_global, icomm)
+
+    wsum = sum(gs%kweight(:))
+    corr_global(:, :) = corr_global(:, :) / wsum
+    trace_global = trace_global / wsum
+    do idir = 1, 3
+        corr_global(idir, idir) = corr_global(idir, idir) + trace_global
+    end do
+    sbe%corr1_tensor(:, :) = corr_global(:, :) / gs%volume
+
+    return
+end subroutine prepare_first_order_correction
 
 
 subroutine calc_current_bloch(sbe, gs, Ac, jmat, icomm)
@@ -95,27 +167,14 @@ subroutine calc_current_bloch(sbe, gs, Ac, jmat, icomm)
     end do
     !$omp end parallel do
 
-    if(norder_correction>=1)then
-        do ik = sbe%ik_min, sbe%ik_max
-            do idir = 1, 3
-                do nb = 1, gs%ne/2
-                    do ib = 1, sbe%nb
-                        pin(idir) = gs%p_tm_matrix(ib, nb, idir, ik)
-                        pni_Ac = gs%p_tm_matrix(nb, ib, 1, ik) * Ac(1) + &
-                                 gs%p_tm_matrix(nb, ib, 2, ik) * Ac(2) + &
-                                 gs%p_tm_matrix(nb, ib, 3, ik) * Ac(3)
-                        if(nb /= ib) then
-                            if(abs(gs%delta_omega(ib, nb, ik))> 1.d-3)then
-                                tmp1(idir) = tmp1(idir) - gs%kweight(ik) * &
-                                    2.d0 * sbe%rho(nb, nb, ik) * &
-                                    dble(pni_Ac*pin(idir)) / gs%delta_omega(ib, nb, ik) 
-                            end if
-                        end if
-                    end do
-                end do
-            end do
-        end do
-    end if
+    ! NOTE: the original real-time first-order band loop was removed here.
+    ! It used only p_tm_matrix (never rvnl_tm_matrix, so it was inconsistent
+    ! with the full-velocity current above when yn_vnl_correction='y'), it
+    ! weighted the sum by the evolving populations sbe%rho(nb,nb,ik) instead of
+    ! the reference ground-state occupations, and it repeated a full band/k
+    ! reduction at every time step for a coefficient that is fixed by the
+    ! initial ground state.  It is replaced by sbe%corr1_tensor, which is built
+    ! once by prepare_first_order_correction() and subtracted below.
 
     if(norder_correction>=2)then
         do ik = sbe%ik_min, sbe%ik_max
@@ -309,6 +368,12 @@ subroutine calc_current_bloch(sbe, gs, Ac, jmat, icomm)
 
     jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:)) &
         & + Ac * calc_trace(sbe, gs, sbe%nb, icomm)) / gs%volume
+
+    if (norder_correction >= 1) then
+        ! corr1_tensor is the residual linear current left by the
+        ! truncated band basis. Subtract it to restore the sum rule.
+        jmat(:) = jmat(:) - matmul(sbe%corr1_tensor(:, :), Ac(:))
+    end if
 
     return
 end subroutine calc_current_bloch
