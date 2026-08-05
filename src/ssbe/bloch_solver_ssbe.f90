@@ -320,7 +320,7 @@ subroutine calc_current_bloch(sbe, gs, Ac, jmat, icomm)
         ! The diamagnetic term N_e*Ac is exactly cancelled by the N_VB*A term of
         ! the first-order adiabatic correction (Eq.(20) of the reference above),
         ! which is accumulated into tmp1 by the norder_correction>=1 block.
-        jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:))) / gs%volume
+        jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:)) &
             & + Ac * calc_trace(sbe, gs, sbe%nb, icomm)) / gs%volume
     else
         jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:)) &
