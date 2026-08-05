@@ -1,0 +1,1666 @@
+%%
+%% report.tex --- bloch_solver_ssbe.f90 の実装と物理的背景の解析メモ
+%% コンパイル: platex report.tex && dvipdfmx report.dvi
+%%
+\documentclass[dvipdfmx,a4paper,11pt]{jsarticle}
+
+\usepackage[dvipdfmx]{graphicx}
+\usepackage[dvipdfmx]{xcolor}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage[margin=25mm]{geometry}
+\usepackage[dvipdfmx]{hyperref}
+\usepackage{pxjahyper}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=[rgb]{0.0,0.25,0.55},
+  urlcolor=[rgb]{0.0,0.35,0.45},
+  citecolor=[rgb]{0.0,0.25,0.55},
+}
+
+\definecolor{lstbg}{rgb}{0.97,0.97,0.94}
+\definecolor{lstkw}{rgb}{0.10,0.25,0.65}
+\definecolor{lstcm}{rgb}{0.15,0.45,0.20}
+\definecolor{lstst}{rgb}{0.60,0.20,0.15}
+
+\lstset{
+  language=[90]Fortran,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{lstkw}\bfseries,
+  commentstyle=\color{lstcm}\itshape,
+  stringstyle=\color{lstst},
+  backgroundcolor=\color{lstbg},
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color[rgb]{0.75,0.75,0.72},
+  numbers=left,
+  numberstyle=\tiny\color[rgb]{0.5,0.5,0.5},
+  numbersep=8pt,
+  breaklines=true,
+  breakatwhitespace=false,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  captionpos=b,
+  aboveskip=1.2\baselineskip,
+  belowskip=0.8\baselineskip,
+}
+
+%% 便利マクロ
+\newcommand{\file}[1]{\texttt{#1}}
+\newcommand{\vk}{\bm{k}}
+\newcommand{\vA}{\bm{A}}
+\newcommand{\vp}{\bm{p}}
+\newcommand{\vv}{\bm{v}}
+\newcommand{\vr}{\bm{r}}
+\newcommand{\Tr}{\mathrm{Tr}}
+\newcommand{\Real}{\mathrm{Re}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\dt}{\Delta t}
+
+\title{\file{bloch\_solver\_ssbe.f90} の実装と物理的背景\\[2mm]
+       \large --- SALMON \file{src/ssbe} 半導体ブロッホ方程式ソルバーの解析メモ ---}
+\author{解析メモ}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+SALMON の \file{src/ssbe/bloch\_solver\_ssbe.f90} について、背景にある物理・方程式と、
+それがコードのどの部分に対応するかを整理する。あわせて、数値解法としての性質
+（厳密に保存される量、安定性条件、時間精度）と、デバッグ時に注意すべき実装上の
+不整合・潜在的な問題点をまとめる。
+
+後半では二つの検証を行う。第一に、非局所擬ポテンシャル補正
+（\file{yn\_vnl\_correction}）について、行列要素の生成側・独立な後処理ツール・
+本体 RT-TDDFT を横断的に読み、規約の一致を確認したうえで、
+SBE 実装がベクトルポテンシャルの 1 次で打ち切られていることを示す
+（\ref{sec:vnl-verify} 節）。第二に、断熱補正
+（\file{norder\_correction}）について、理論的根拠である
+Yakovlev \& Wismer \cite{yakovlev2017} と実装を式単位で突き合わせ、
+\textbf{現行の 1 次補正が論文 Eq.~(20) を正しく実装していないこと}を示す
+（\ref{sec:codex-deriv}, \ref{sec:vlad} 節）。
+\end{abstract}
+
+\tableofcontents
+
+%======================================================================
+\section{何を解いているか}
+
+このソルバーが解いているのは、
+\textbf{速度ゲージ（velocity gauge）でブロッホ基底に固定した、独立粒子密度行列の時間発展}
+である。
+
+各 $k$ 点ごとに独立な密度行列 $\rho_{nm}(\vk,t)$（$n,m$ はバンド指数）を
+von Neumann 方程式に従って発展させる。
+
+%----------------------------------------------------------------------
+\subsection{ハミルトニアン}
+
+原子単位系（$\hbar = m = e = 1$）で、ベクトルポテンシャル $\vA(t)$ の下での
+ブロッホ状態の周期部分 $u_{n\vk}$ に対するハミルトニアンは
+%
+\begin{align}
+  H_{\vk}(t)
+  &= \frac{1}{2}\bigl(-i\nabla + \vk + \vA(t)\bigr)^2 + V_{\mathrm{loc}} + V_{\mathrm{NL}}
+  \nonumber\\
+  &= H_{\vk}(0) + \vA(t)\cdot(-i\nabla + \vk) + \frac{A^2}{2}
+     + (V_{\mathrm{NL}}\ \text{の補正}).
+  \label{eq:ham}
+\end{align}
+%
+バンド基底で行列要素をとると
+%
+\begin{equation}
+  H_{nm}(\vk,t)
+  = \eps_{n\vk}\,\delta_{nm}
+  + \vA(t)\cdot\vp_{nm}(\vk)
+  + \Bigl[\,\vA(t)\cdot\vk + \frac{A^2}{2}\,\Bigr]\delta_{nm},
+  \label{eq:hmat}
+\end{equation}
+%
+ここで
+%
+\begin{equation}
+  \vp_{nm}(\vk) = \langle u_{n\vk} | -i\nabla | u_{m\vk}\rangle
+  \label{eq:pdef}
+\end{equation}
+%
+が \file{gs\%p\_tm\_matrix} であり、SALMON の基底状態計算が出力する
+\file{SYSNAME\_tm.data} から読み込まれる
+(\file{src/io/write.f90:246} の \verb|upu_l = -zI * wrk * Hvol|)。
+
+\paragraph{重要な確認事項}
+\file{src/common/stencil.f90:572} の \verb|calc_gradient_psi| は $\nabla u$ のみを
+計算しており、\textbf{\file{p\_tm\_matrix} には $+\vk$ が含まれていない}。
+この事実は後述の電流の議論（\ref{sec:current} 節）で効いてくる。
+
+%----------------------------------------------------------------------
+\subsection{非局所擬ポテンシャル補正}
+
+ノルム保存擬ポテンシャルを用いる場合、速度演算子は運動量演算子と一致せず、
+%
+\begin{equation}
+  \bm{v} = \vp + (-i)[\vr, V_{\mathrm{NL}}]
+  \label{eq:vnl}
+\end{equation}
+%
+となる。第 2 項が \file{gs\%rvnl\_tm\_matrix}（\file{\_tm.data} の後半ブロック）であり、
+\file{sbe\%flag\_vnl\_correction}（入力変数 \file{yn\_vnl\_correction}、既定値 \file{'n'}）
+で on/off される。この項を落とすと f-sum rule（振動子強度和則）が破れるため、
+物理的には既定値 \file{'n'} の方が近似の粗い側である点に注意する。
+
+%----------------------------------------------------------------------
+\subsection{時間発展方程式}
+
+\begin{equation}
+  i\,\frac{\partial \rho(\vk,t)}{\partial t} = \bigl[\, H(\vk,t),\ \rho(\vk,t) \,\bigr]
+  \label{eq:vn}
+\end{equation}
+%
+成分で書き下すと
+%
+\begin{equation}
+  i\,\frac{\partial \rho_{nm}}{\partial t}
+  = (\eps_n - \eps_m)\,\rho_{nm}
+  + \sum_{l}\Bigl\{ (\vA\cdot\vp_{nl})\,\rho_{lm} - \rho_{nl}\,(\vA\cdot\vp_{lm}) \Bigr\}.
+  \label{eq:vncomp}
+\end{equation}
+
+式 \eqref{eq:hmat} のうち\textbf{単位行列に比例する項}（$\vA\cdot\vk$ と $A^2/2$）は
+$\rho$ と可換なので交換子から落ちる。したがって、コードがこれらを無視しているのは
+\emph{時間発展に関しては}正しい扱いである。
+
+%======================================================================
+\section{物理とコードの対応}
+
+%----------------------------------------------------------------------
+\subsection{データ構造}
+
+\begin{lstlisting}[firstnumber=10,caption={派生型 \texttt{s\_sbe\_bloch\_solver}}]
+    type s_sbe_bloch_solver
+        !k-points for real-time SBE calculation
+        integer :: nk, nb
+        integer :: ik_max, ik_min
+        complex(8), allocatable :: rho(:, :, :)
+        logical :: flag_vnl_correction
+    end type
+\end{lstlisting}
+
+\file{rho} は \verb|(1:nb, 1:nb, ik_min:ik_max)| で確保される。
+$k$ 点は MPI ランク間で分割され（\file{util\_ssbe} の \verb|split_range|）、
+各ランクは自分の担当 $k$ 点の密度行列のみを保持する。
+バンド数 \file{sbe\%nb} は入力 \file{nstate\_sbe} で、基底状態のバンド数
+\file{gs\%nb} 以下に打ち切られる。
+
+%----------------------------------------------------------------------
+\subsection{\texttt{calc\_hrho\_bloch\_k} --- 交換子 $[H,\rho]$}
+
+該当箇所は \file{bloch\_solver\_ssbe.f90:359--388}。
+
+\begin{lstlisting}[firstnumber=367,caption={対角部分（アダマール積）と非対角部分（ZGEMM）}]
+        hrho_k(1:nb, 1:nb) = gs%delta_omega(1:nb, 1:nb, ik) * rho_k(1:nb, 1:nb)
+        do idir=1, 3 !1:x, 2:y, 3:z
+            call ZGEMM("N","N", nb, nb, nb, &
+                dcmplx(+Ac(idir), 0d0), &
+                p_k(:, :, idir),nb, &
+                rho_k(:, :), nb, &
+                dcmplx(1d0, 0d0), hrho_k(:, :),nb)
+            call ZGEMM("N","N", nb, nb, nb, &
+                dcmplx(-Ac(idir), 0d0), &
+                rho_k(:, :), nb, &
+                p_k(:, :, idir),nb, &
+                dcmplx(1d0, 0d0), hrho_k(:, :), nb)
+        end do !idir
+\end{lstlisting}
+
+\begin{itemize}
+\item 第 1 行は $\delta\omega_{nm}(\vk) = \eps_{n\vk} - \eps_{m\vk}$
+      （\file{gs\_info\_ssbe.f90:279} で定義）との
+      \textbf{要素ごとの積（アダマール積）}であり、対角な $H_0$ との交換子
+      $[H_0,\rho]_{nm} = (\eps_n - \eps_m)\rho_{nm}$ そのものである。
+      \emph{行列積ではない}ことに注意。
+\item 続く 2 回の \verb|ZGEMM| が $+A_\alpha\, p\rho$ と $-A_\alpha\, \rho p$、
+      すなわち $[\vA\cdot\vp,\ \rho]$ を BLAS で計算している。
+\end{itemize}
+
+したがって、このルーチンの出力は $\mathrm{hrho} = [H,\rho]$ である（$-i$ は付いていない）。
+
+%----------------------------------------------------------------------
+\subsection{\texttt{dt\_evolve\_bloch} --- 4 次テイラー展開}
+\label{sec:evolve}
+
+該当箇所は \file{bloch\_solver\_ssbe.f90:317--389}。
+
+Liouville 超演算子を $\mathcal{L}\rho \equiv [H,\rho]$ と定義すると、
+$\vA$ を 1 ステップの間固定したときの厳密解は
+%
+\begin{equation}
+  \rho(t+\dt) = e^{-iH\dt}\,\rho(t)\,e^{+iH\dt}
+  = \sum_{n=0}^{\infty} \frac{(-i\dt)^n}{n!}\,\mathcal{L}^n \rho(t).
+  \label{eq:taylor}
+\end{equation}
+
+コードは $\mathcal{L}\rho,\ \mathcal{L}^2\rho,\ \mathcal{L}^3\rho,\ \mathcal{L}^4\rho$ を
+\verb|calc_hrho_bloch_k| の反復適用で構成し、係数
+$1,\ 1/2,\ 1/6,\ 1/24$ で足し込む。すなわち\textbf{ $n=4$ で打ち切る}。
+
+\begin{lstlisting}[firstnumber=343,caption={テイラー級数の構成と加算}]
+        call calc_hrho_bloch_k(ik, sbe%rho(:, :, ik), p_rvnl_k, hrho1_k)
+        call calc_hrho_bloch_k(ik, hrho1_k, p_rvnl_k, hrho2_k)
+        call calc_hrho_bloch_k(ik, hrho2_k, p_rvnl_k, hrho3_k)
+        call calc_hrho_bloch_k(ik, hrho3_k, p_rvnl_k, hrho4_k)
+
+        sbe%rho(:, :, ik) = sbe%rho(:, :, ik) + hrho1_k * (- zi * dt)
+        sbe%rho(:, :, ik) = sbe%rho(:, :, ik) + hrho2_k * (- zi * dt) ** 2 * (1d0 / 2d0)
+        sbe%rho(:, :, ik) = sbe%rho(:, :, ik) + hrho3_k * (- zi * dt) ** 3 * (1d0 / 6d0)
+        sbe%rho(:, :, ik) = sbe%rho(:, :, ik) + hrho4_k * (- zi * dt) ** 4 * (1d0 / 24d0)
+\end{lstlisting}
+
+ここが数値的な急所であり、\ref{sec:numerics} 節で詳しく述べる。
+
+%----------------------------------------------------------------------
+\subsection{\texttt{calc\_current\_bloch} --- 電流密度}
+\label{sec:current}
+
+該当箇所は \file{bloch\_solver\_ssbe.f90:59--314}。
+
+厳密な物質電流（電子の流束）は
+%
+\begin{equation}
+  J^\alpha(t)
+  = \frac{1}{\Omega}\,\frac{1}{\sum_{\vk} w_{\vk}}
+    \sum_{\vk} w_{\vk}\,
+    \Tr\Bigl[\rho(\vk,t)\bigl(p^\alpha(\vk) + k^\alpha + A^\alpha(t)\bigr)\Bigr]
+  \label{eq:jexact}
+\end{equation}
+%
+である。コードが実際に計算しているのは
+%
+\begin{equation}
+  j^\alpha
+  = \frac{1}{\Omega}\left[
+      \frac{1}{\sum_{\vk} w_{\vk}}\,
+      \Real \sum_{\vk} w_{\vk} \sum_{n,m} \rho_{mn}(\vk)\, p^\alpha_{nm}(\vk)
+      \;+\; N_e\, A^\alpha
+    \right]
+  \label{eq:jcode}
+\end{equation}
+%
+であり（\file{:84--95} と \file{:310--311}）、$N_e$ は \verb|calc_trace| が返す
+単位胞あたりの電子数、第 2 項が\textbf{反磁性項}にあたる。
+
+\paragraph{符号規約}
+返り値は $+(\langle \vp\rangle + N_e \vA)/\Omega$、すなわち\textbf{電子の流束}である。
+電荷の符号は呼び出し側で付く
+（\file{realtime\_ssbe.f90:75} の \verb|dot_product(E, -Jmat)|、
+ \file{multiscale\_ssbe.f90:201} の \verb|vec_j_em = -Jmat_macro|）。
+
+\paragraph{$\vk$ 対角項の欠落}
+式 \eqref{eq:jexact} の $k^\alpha \delta_{nm}$ の寄与が
+\textbf{実装では落ちている}。$t=0$ では時間反転対称な $k$ グリッド上で
+$\sum_{\vk} w_{\vk}\, \vk\, n_{n\vk} = 0$ となるため消えるが、
+駆動下で $\rho_{nn}(\vk,t)$ が $\vk$ に関して非対称に変化すれば残る。
+\verb|calc_energy| の \file{:440} に
+\verb|!& + dot_product(kvec(:), Ac(:))| とコメントアウトが残っていることから、
+作者もこの項を認識していたことがわかる。\textbf{デバッグ対象の候補である。}
+
+%----------------------------------------------------------------------
+\subsection{\texttt{calc\_trace}}
+
+該当箇所は \file{bloch\_solver\_ssbe.f90:391--415}。
+%
+\begin{equation}
+  \Tr = \frac{1}{\sum_{\vk} w_{\vk}} \sum_{\vk} w_{\vk}
+        \sum_{n=1}^{n_{\max}} \Real\, \rho_{nn}(\vk)
+  \label{eq:trace}
+\end{equation}
+%
+すなわち単位胞あたりの電子数。\file{realtime\_ssbe.f90:91--94} では
+$n_{\max} = $ \file{nstate\_sbe} と $n_{\max} = $ \file{nelec/2} の 2 通りを計算し、
+その差から励起電子数・ホール数を求めている。
+
+%----------------------------------------------------------------------
+\subsection{\texttt{calc\_energy}}
+\label{sec:energy}
+
+該当箇所は \file{bloch\_solver\_ssbe.f90:418--450}。$\Tr[\rho H]$ を評価する。
+%
+\begin{equation}
+  E = \frac{1}{\sum_{\vk} w_{\vk}} \sum_{\vk} w_{\vk} \sum_{n}
+      \left\{
+        \rho_{nn}\Bigl(\eps_n + \frac{A^2}{2}\Bigr)
+        + \sum_{m}\sum_{\alpha} A^\alpha\,
+          \Real\bigl[\rho_{nm}\, p^{\mathrm{mod},\alpha}_{mn}\bigr]
+      \right\}
+  \label{eq:energy}
+\end{equation}
+
+\paragraph{不整合（要注意）}
+ここだけ \file{gs\%p\_mod\_matrix}
+（$= $ \file{p\_tm} $+$ \file{rvnl} を\textbf{常に}含む、\file{gs\_info\_ssbe.f90:274}）
+を使っている。一方 \verb|dt_evolve_bloch| と \verb|calc_current_bloch| は
+\file{p\_tm\_matrix} を使い、\file{rvnl} はフラグが立っているときだけ加算する。
+既定値 \file{yn\_vnl\_correction='n'} では
+\textbf{発展させているハミルトニアンと評価しているハミルトニアンが異なる}ため、
+エネルギー保存が破れる。ただし現状 \verb|calc_energy| は
+\file{realtime\_ssbe} からは呼ばれておらず（代わりに $\int \bm{E}\cdot\bm{J}\,dt$ を積算）、
+潜在的な不具合にとどまっている。
+
+%======================================================================
+\section{\texttt{norder\_correction} は何をしているか}
+\label{sec:norder}
+
+該当箇所は \file{bloch\_solver\_ssbe.f90:98--306}。
+このファイルで最も読みにくい部分なので、動機から説明する。
+
+%----------------------------------------------------------------------
+\subsection{動機：速度ゲージ $+$ バンド打ち切りによる和則の破れ}
+
+式 \eqref{eq:jcode} の反磁性項 $N_e \vA/\Omega$ は非常に大きな量である。
+厳密理論では、これが占有バンドの\textbf{全バンドにわたる}バンド間応答によって
+完全に相殺される（実効質量和則 / f-sum rule）：
+%
+\begin{equation}
+  \sum_{n \in \mathrm{occ}} \sum_{m\ (\text{全バンド})}
+  \frac{2\,\Real\bigl[p^\alpha_{nm} p^\beta_{mn}\bigr]}{\eps_m - \eps_n}
+  = +N_e\,\delta^{\alpha\beta}.
+  \label{eq:fsum}
+\end{equation}
+%
+（この符号は \ref{sec:codex-deriv} 節で $\vk\cdot\vp$ 摂動論から
+改めて導出する。）
+
+\file{nstate\_sbe} でバンドを打ち切ると、この相殺が不完全になり、
+\textbf{絶縁体であるにもかかわらず巨大な Drude 的残留電流が現れる}
+（＝静的誘電率を誤る）。
+
+\file{norder\_correction} の各ブロックは、占有バンドの\textbf{断熱的（瞬時）分極応答}を
+$\vA$ の摂動展開として次数ごとに足し戻す補正項である。
+
+%----------------------------------------------------------------------
+\subsection{各次数の内容}
+
+\paragraph{1 次（\file{:98--118}、$O(A^1)$）}
+1 次摂動論 $\rho^{(1)}_{in} = \rho_{nn}(\vA\cdot\vp_{in})/(\eps_n - \eps_i)$ を
+電流に代入したものに相当する：
+%
+\begin{equation}
+  \Delta j^\alpha
+  = -\frac{1}{\Omega}\,\frac{1}{\sum w}
+    \sum_{\vk} w_{\vk}
+    \sum_{n=1}^{N_e/2} \sum_{i \neq n}
+    \frac{2\,\rho_{nn}\,\Real\bigl[(\vA\cdot\vp_{ni})\,p^\alpha_{in}\bigr]}
+         {\eps_i - \eps_n}.
+  \label{eq:corr1}
+\end{equation}
+%
+バンド完全和であれば、これはちょうど $-N_e A^\alpha$ となり反磁性項を打ち消す。
+
+\paragraph{2 次（\file{:120--170}、$O(A^2)$）}
+2 つのブロックからなる。$p_{jn}\,(\vA\cdot\vp_{ij})\,(\vA\cdot\vp_{ni})$ の三重積が
+標準的な 2 次 sum-over-states であり、$p_{nn}$ を含む後半（\file{:157--165}）は
+対角要素（エネルギーシフト）を差し引く counter-term で、分母が
+$(\Delta\eps)^2$ になっている。
+
+\paragraph{3 次（\file{:172--306}、$O(A^3)$）}
+同様に 4 重積と $(\Delta\eps)^3$ 分母、
+$(\Delta\eps_{in} + \Delta\eps_{jn}) / (2\,\Delta\eps_{in}^2\,\Delta\eps_{jn}^2)$
+の形の対角 counter-term、最後に \verb|sum1| を用いた $(\Delta\eps)^3$ ブロック
+（\file{:275--305}）が続く。
+
+%----------------------------------------------------------------------
+\subsection{デバッグ上の要注意点}
+
+\begin{enumerate}
+\item \textbf{エネルギー分母のガードがハードカット。}
+      全ブロックで \verb|abs(gs%delta_omega(...)) > 1.d-3|
+      （a.u.\ 換算で約 $27\,\mathrm{meV}$）という条件が使われている。
+      準縮退ペアは\emph{正則化されるのではなく完全に捨てられる}。
+      金属や $k$ グリッド上のバンド交差があると寄与が黙って消え、
+      パラメータに対して結果が不連続になる。
+      \textbf{異常な結果が出たときの第一容疑者。}
+
+\item \textbf{外側ループ範囲が次数間で不整合。}
+      1 次は \verb|do nb = 1, gs%ne/2|（占有バンドのみ、\file{:101}）だが、
+      2 次・3 次は \verb|do nb = 1, sbe%nb|（SBE 空間の全バンド、\file{:123}, \file{:175}）
+      である。いずれも \verb|sbe%rho(nb,nb,ik)| で重み付けされるため基底状態では
+      差が小さいが、強励起下では 2 次・3 次だけが伝導帯からの寄与を拾う。
+      意図的かどうか要確認。
+
+\item \textbf{配列外参照の可能性。}
+      1 次ブロックは \verb|sbe%rho(nb,nb,ik)| を \verb|nb| が \verb|gs%ne/2| まで
+      走る形で参照するが、\verb|sbe%rho| は \file{sbe\%nb} $=$ \file{nstate\_sbe}
+      までしか確保されていない（\file{:46}）。
+      \file{input\_checker\_sbe.f90:89} は \file{nstate\_sbe} $\le$ \file{nstate}
+      しか検査しておらず、\textbf{\file{nstate\_sbe} $<$ \file{nelec/2} を弾いていない}。
+
+\item \textbf{3 成分配列の使われ方。}
+      \verb|pnn(1:3)| 等は 3 成分配列として宣言されているが、
+      ループ内では \verb|idir| 成分しか書き込まれない（例：\file{:124}）。
+      読み出しも \verb|idir| 成分だけなので動作はするが、他の 2 成分には
+      前の反復の値が残る。デバッガで観察する際に混乱の元であり、
+      これらのブロックが（主要項と異なり）\textbf{OpenMP 並列化されていない}
+      理由でもある。
+
+\item \textbf{計算コスト。}
+      3 次は $O(N_b^4 \cdot N_k \cdot 3)$ であり、極めて重い。
+\end{enumerate}
+
+%======================================================================
+\section{数値的性質とデバッグ用不変量}
+\label{sec:numerics}
+
+4 次テイラー法の性質を整理しておくと、問題の切り分けが速くなる。
+
+%----------------------------------------------------------------------
+\subsection{厳密に保存される量（破れたら実装バグ）}
+
+\begin{table}[htbp]
+\centering
+\caption{時間刻みやテイラー次数に依らず厳密に保存される量}
+\label{tab:invariants}
+\begin{tabular}{@{}lp{95mm}@{}}
+\toprule
+\textbf{量} & \textbf{理由} \\
+\midrule
+$\Tr \rho$ &
+交換子のトレースは恒等的に $0$（$\Tr[H,\rho] = 0$）。したがって
+$\mathcal{L}^n\rho$ $(n \ge 1)$ はすべてトレースレスであり、
+$\dt$ やテイラー次数に依らず\textbf{厳密に保存}される。 \\[2mm]
+$\rho$ のエルミート性 &
+$\mathcal{L}$ はエルミート $\leftrightarrow$ 反エルミートを入れ替える。
+$(-i\dt)^n$ の位相と組み合わさって、テイラー各項がエルミート性を保つ。 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+すなわち、\textbf{電子数がドリフトしたら、それは時間刻みの問題ではなく実装バグである。}
+\verb|max abs(rho - rho^dagger)| についても同様。
+
+%----------------------------------------------------------------------
+\subsection{保存されない量（不安定性の源）}
+
+\begin{itemize}
+\item \textbf{ユニタリ性・冪等性は保たれない。}
+      $\rho$ の固有値が $[0,2]$ の外に出得る。
+\item 打ち切りテイラー多項式は
+      $\bigl|\sum_{n=0}^{4} (-iz)^n/n!\bigr| > 1$ となる $z$ が存在するため、
+      緩やかに指数増大する。虚軸上の安定領域はおおむね
+      %
+      \begin{equation}
+        |\lambda|\,\dt \lesssim 2.83,
+        \qquad
+        \lambda_{\max} \approx (\eps_{\max} - \eps_{\min}) + 2|\vA|\,|\vp|_{\max}
+        \label{eq:stability}
+      \end{equation}
+      %
+      である。ここで $\lambda$ は $H$ の固有値差の最大値。
+\end{itemize}
+
+したがって、\textbf{\file{nstate\_sbe} を増やすと $\eps_{\max}$ が上がり、
+$\dt$ を縮めないと発散する}。計算が blow up したときの最有力候補である。
+
+%----------------------------------------------------------------------
+\subsection{時間精度}
+
+\file{realtime\_ssbe.f90:72} は
+%
+\begin{lstlisting}[firstnumber=70,caption={時間発展ループ（\texttt{realtime\_ssbe.f90}）}]
+    do it = 1, nt
+        t = dt * it
+        call dt_evolve_bloch(sbe, gs, Ac_ext_t(:, it), dt)
+        call calc_current_bloch(sbe, gs, Ac_ext_t(:, it), Jmat, icomm)
+\end{lstlisting}
+%
+のように、\textbf{ステップ始点の $\vA$} で $H$ を固定して 1 ステップ進める。
+指数関数自体は $\dt$ の 4 次まで展開されているが、
+\textbf{$\vA(t)$ の時間依存性に対しては 1 次精度（前進 Euler 相当）}である。
+中点 $\vA(t + \dt/2)$ を使えば 2 次精度になる。
+$\dt$ 収束性を調べる際にはこの点が効いてくる。
+
+%======================================================================
+\section{モデルとしての射程}
+
+「Semiconductor Bloch Equations」という名前だが、標準的な SBE との差分を
+明示しておく。
+
+\begin{itemize}
+\item \textbf{緩和・位相緩和がない}（$T_1$, $T_2$ なし）。純粋にコヒーレントな発展である。
+\item \textbf{クーロン／交換の繰り込みがない}（Hartree--Fock 項なし）。
+      したがって励起子効果は入らない。実質的に
+      「独立粒子近似の von Neumann 方程式」である。
+\item \textbf{$\vk$ のシフト（Bloch 加速）は陽に現れない。}
+      速度ゲージ $+$ 固定ブロッホ基底では $\vk$ は良い量子数であり、
+      各 $\vk$ が完全に独立に発展する。
+      そのため $\vk$ 微分も $k$ 点間の接続も不要で、実装が非常に単純になっている。
+      バンド内加速の物理は $\vA\cdot\vp$ 結合が担う。
+      長さゲージ / Houston 基底の定式化とは対照的である。
+\item \textbf{初期占有はハードコード。}
+      \file{gs\_info\_ssbe.f90:107--108} が \file{gs\%occup} を
+      「下から $N_e/2$ バンドに $2.0$」で上書きする（コメントに \verb|!!Experimental!!|）。
+      \textbf{金属や部分占有はサポートされていない。}
+\item \file{gs\%d\_matrix}（\file{gs\_info\_ssbe.f90:287}、双極子行列 $i\vp/\Delta\omega$）は
+      計算されるが、このソルバーでは一切使われていない（デッドコード）。
+\end{itemize}
+
+%======================================================================
+\section{実装上の細かい傷}
+
+デバッグ中に踏みそうな箇所を表 \ref{tab:smells} にまとめる。
+
+\begin{table}[htbp]
+\centering
+\caption{\file{bloch\_solver\_ssbe.f90} の実装上の傷}
+\label{tab:smells}
+\begin{tabular}{@{}lp{110mm}@{}}
+\toprule
+\textbf{行} & \textbf{内容} \\
+\midrule
+\file{:323} &
+\verb|complex(8), parameter :: zi| がローカル宣言され、
+\file{:2} で \file{math\_constants} から import した \verb|zi| を\textbf{シャドウ}している。
+値は同じだが紛らわしい。 \\[1mm]
+
+\file{:320} &
+\verb|dt_evolve_bloch| の \verb|gs| が \verb|intent(inout)| だが実際には変更されない
+（\verb|calc_current_bloch| は \verb|intent(in)|）。\verb|intent(in)| にすべき。 \\[1mm]
+
+\file{:333} &
+\verb|nk = sbe%nk| は代入後まったく使われていない。 \\[1mm]
+
+\file{:67} &
+\verb|ierr| が未使用。 \\[1mm]
+
+\file{:335} &
+\verb|!$omp parallel do| に対応する \verb|!$omp end parallel do| がない
+（Fortran では合法で \verb|end do| で閉じる）が、
+\file{:96}, \file{:410}, \file{:445} では書かれており不統一。 \\[1mm]
+
+\file{:98--306} &
+補正ブロックは OpenMP 並列化されていないため、
+\file{norder\_correction} $> 0$ にすると並列効率が急落する。 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%======================================================================
+\section{切り分けの手順（提案）}
+
+\begin{enumerate}
+\item \textbf{$\vA \equiv 0$ のテスト。}
+      $\rho$ は対角で $H_0$ と可換なので $[H,\rho] = 0$ となり、
+      $\rho$ は\textbf{厳密に静止}するはずである。
+      さらに $j$ は $k$ 和で $0$ になるはず（時間反転対称性）。
+      これが通らなければ、入力データ（\file{\_tm.data} / \file{\_k.data}）または
+      初期化の問題である。
+
+\item \textbf{補正を無効化して主要項だけを見る。}
+      \file{norder\_correction=0}, \file{yn\_vnl\_correction='n'} に固定する。
+
+\item \textbf{不変量を毎ステップ監視する。}
+      $\Tr\rho$、$\max|\rho - \rho^\dagger|$、$\rho$ の最大固有値
+      （$[0,2]$ を出たら不安定化の兆候）。
+
+\item \textbf{$\dt$ の妥当性チェック。}
+      式 \eqref{eq:stability} の $\dt \cdot (\eps_{\max} - \eps_{\min}) < 2.8$ を
+      満たしているか。\file{nstate\_sbe} を振ったときにこれが破れていないか。
+
+\item \textbf{$\dt$ を半分にして収束次数を見る。}
+      誤差が $1/2$ でスケールするなら $\vA$ の時間離散化
+      （\ref{sec:numerics} 節の 1 次精度）が支配的、
+      $1/16$ なら指数展開側が支配的である。
+\end{enumerate}
+
+%======================================================================
+\section{非局所擬ポテンシャル補正の妥当性検証}
+\label{sec:vnl-verify}
+
+ここでは \file{yn\_vnl\_correction} $=$ \file{'n'}（すなわち \file{rvnl\_tm\_matrix} を
+使わない設定）を検査対象として、\file{norder\_correction} $= 0$ の主要項が
+理論式どおり実装されているかどうかを判定する方法を検討する。
+以下は、生成側コード（\file{src/io/write.f90}）・独立な後処理ツール
+（\file{utility/linear\_response\_from\_transition\_moments/tm2sigma.f90}）・
+本体 RT-TDDFT の非局所射影子更新
+（\file{src/common/hamiltonian.f90:update\_kvector\_nonlocalpt}）を
+横断的に読んで得た結論である。
+
+%----------------------------------------------------------------------
+\subsection{添字・符号・共役の規約は正しい}
+
+\file{src/io/write.f90:325--332} を追うと、格納されている量は
+%
+\begin{equation}
+  \bigl[u_{r V_{\mathrm{NL}} - V_{\mathrm{NL}} r}\bigr]_{\alpha,\, ib1,\, ib2,\, ik}
+  = -i\,\langle u_{ib1,\vk} | [\,r_\alpha,\, V_{\mathrm{NL}}\,] | u_{ib2,\vk}\rangle \cdot \mathrm{Hvol}
+  \label{eq:rvnl-def}
+\end{equation}
+%
+であり（\verb|bra| 添字は \verb|ib1|）、これは理論式
+$\bm{v} = -i[\vr, H] = \vp + (-i)[\vr, V_{\mathrm{NL}}]$（式 \eqref{eq:vnl}）と一致する。
+
+独立実装である \file{tm2sigma.f90:156, 166} でも
+\verb|matrix_v = p - i[r,V_NL]| とコメントで明記されたうえで、
+同じ添字順・符号で \file{\_tm.data} を読み込んでいる。
+\file{gs\_info\_ssbe.f90:209, 223, 274} の \file{p\_mod\_matrix = p\_tm + rvnl} も同一の規約である。
+
+なお、射影子の規格化係数 \verb|ppg%rinv_uvu| は \file{src/common/structures.f90:264} で
+\verb|real(8)| と宣言されており、複素共役をとっても値が変わらないため、
+\file{write.f90:318} で \verb|uVpsi_l| にのみ乗算し \verb|uVrpsi_l| に乗算していない非対称な書き方も
+数学的には無害である。
+
+\textbf{結論として、3 つの独立した実装（生成側・後処理ツール・SBE 読み込み側）の
+規約は完全に一致しており、添字・符号・共役の取り違えという意味でのバグは見当たらない。}
+
+%----------------------------------------------------------------------
+\subsection{本質的な問題：非局所補正は $O(A^1)$ で打ち切られている}
+\label{sec:vnl-truncation}
+
+速度ゲージでの厳密な非局所ポテンシャルは、以下のゲージ変換で与えられる：
+%
+\begin{align}
+  V_{\mathrm{NL}}(\vA)
+  &= e^{-i\vA\cdot\vr}\, V_{\mathrm{NL}}\, e^{i\vA\cdot\vr} \nonumber\\
+  &= V_{\mathrm{NL}}
+     + \underbrace{A_\alpha\cdot\bigl(-i[r_\alpha, V_{\mathrm{NL}}]\bigr)}_{\text{SBE はここまで}}
+     + \underbrace{\frac{1}{2}A_\alpha A_\beta\cdot\bigl(-[r_\alpha,[r_\beta,V_{\mathrm{NL}}]]\bigr) + \cdots}_{\text{SBE は落としている}}.
+  \label{eq:vnl-gauge}
+\end{align}
+
+本体の RT-TDDFT はこれを\textbf{厳密に}扱っている。
+\file{src/common/hamiltonian.f90:867--896}
+(\verb|update_kvector_nonlocalpt|) は、毎ステップ非局所射影子を
+$\vk + \vA(t)$ で作り直す：
+%
+\begin{lstlisting}[firstnumber=867,caption={本体 RT-TDDFT の非局所射影子更新（厳密）}]
+    kAc(1:3,ik) = system%vec_k(1:3,ik) + system%vec_Ac(1:3)
+    ...
+    ekr = exp(zi*(kAc(1,ik)*x+kAc(2,ik)*y+kAc(3,ik)*z))
+    ppg%zekr_uV(j,ilma,ik) = conjg(ekr) * ppg%uv(j,ilma)
+\end{lstlisting}
+
+対して \file{\_tm.data} は $\vA = 0$（すなわち射影子は $\vk$ のみ）で
+一度だけ生成され（\file{write.f90:308} の \verb|veik = conjg(ppg%zekr_uV(j,ilma,ik))|
+は基底状態計算時点の $\vk$ 射影子）、SBE はそこから式 \eqref{eq:vnl-gauge} の
+1 次の項だけを \file{rvnl\_tm\_matrix} として加算する。
+
+このことから：
+\begin{itemize}
+\item ハミルトニアンは $O(A^2)$ の非局所寄与を欠く。
+\item 電流演算子 $\partial H/\partial \vA$ は $O(A^1)$ の非局所寄与を欠く
+      ---これが和則（\ref{sec:vnl-sumrule} 節）に直撃する。
+\end{itemize}
+
+\textbf{これはコーディングミスではなく、理論式そのものの打ち切りである。}
+\file{yn\_vnl\_correction='n'} は、この 1 次項自体をさらに丸ごと落とす設定なので、
+和則の破れはこの設定では設計上大きくなる。切り分けには
+\file{'y'} との比較が不可欠である。
+
+%----------------------------------------------------------------------
+\subsection{和則残差の定式化}
+\label{sec:vnl-sumrule}
+
+$\bm{v} = \vp + (-i)[\vr, V_{\mathrm{NL}}]$ は厳密に $\partial H/\partial \vk$ であるから、
+実効質量定理より
+%
+\begin{equation}
+  \frac{\partial^2 \eps_{n\vk}}{\partial k_\alpha \partial k_\beta}
+  = \delta_{\alpha\beta}
+  - \langle n\vk | [r_\alpha,[r_\beta,V_{\mathrm{NL}}]] | n\vk\rangle
+  + 2\sum_{m \ne n} \frac{\Real\bigl[v^\alpha_{nm} v^\beta_{mn}\bigr]}{\eps_{n\vk} - \eps_{m\vk}}.
+  \label{eq:effmass}
+\end{equation}
+
+充填バンドについて Brillouin ゾーン全体で和をとると
+$\sum_{\vk} \partial^2\eps_n/\partial k^2 = 0$ なので、和則の残差は
+%
+\begin{equation}
+  R_{\alpha\beta}
+  \equiv N_e\,\delta_{\alpha\beta}
+  + \frac{1}{\Omega}\sum_{\vk} w_{\vk} \sum_{n \in \mathrm{occ}}
+    2\sum_{m} \frac{\Real\bigl[v^\alpha_{nm} v^\beta_{mn}\bigr]}{\eps_{n\vk} - \eps_{m\vk}}
+  = \frac{1}{\Omega}\sum_{\vk} w_{\vk} \sum_{n \in \mathrm{occ}}
+    \langle n\vk | [r_\alpha,[r_\beta,V_{\mathrm{NL}}]] | n\vk\rangle
+  \label{eq:sumrule-residual}
+\end{equation}
+%
+に等しい。\textbf{$R_{\alpha\beta}$ はバンド数を無限に増やしても $0$ に収束せず、
+式 \eqref{eq:vnl-gauge} で SBE が落とした二重交換子項に収束する。}
+これが非局所補正の既約誤差（irreducible error）である。
+
+%----------------------------------------------------------------------
+\subsection{判定方法}
+
+\paragraph{方法 A：和則残差 \texttt{sigma\_intra}（推奨・時間発展計算は不要）}
+\file{tm2sigma.f90:118--121} の \verb|sigma_intra| は、
+式 \eqref{eq:sumrule-residual} の $R$ に $i/\omega$ を掛けた量そのものである：
+%
+\begin{lstlisting}[firstnumber=118,caption={\texttt{sigma\_intra}：和則残差の実装}]
+sigma_intra = (zi*n_e/w)* delta_munu
+sigma_intra = sigma_intra + (zi/(w*V))* occ(ib1,ik)* &
+& ( matrix_v(ib1,ib2,mu,ik) * matrix_v(ib2,ib1,nu,ik) / ( eigen(ib1,ik) - eigen(ib2,ik) ) &
+& + matrix_v(ib2,ib1,mu,ik) * matrix_v(ib1,ib2,nu,ik) / ( eigen(ib1,ik) - eigen(ib2,ik) ) )
+\end{lstlisting}
+
+絶縁体には Drude 極があってはならないので、\textbf{\file{sigma\_intra} は $0$ でなければならない。}
+実行方法は 2 通りある：
+\begin{itemize}
+\item GS 計算で \file{yn\_out\_gs\_sgm\_eps='y'} を指定し、出力される
+      \file{\_sigma.data} の 4, 5 列目（\file{sigma\_intra} の実部・虚部）を見る。
+\item \file{\_tm.data} に対して独立ツール
+      \file{utility/linear\_response\_from\_transition\_moments/tm2sigma.f90} を実行する。
+\end{itemize}
+無次元化した破れ量 $|\text{sigma\_intra}| / (N_e/\omega)$ を評価量とする。
+
+\textbf{判定基準（\file{nstate} 収束性を見ることが本質）：}
+\begin{table}[htbp]
+\centering
+\caption{\texttt{sigma\_intra} の \texttt{nstate} 依存性からの判定}
+\label{tab:sigma-intra-judge}
+\begin{tabular}{@{}p{60mm}p{95mm}@{}}
+\toprule
+\textbf{観測} & \textbf{解釈} \\
+\midrule
+\file{nstate} を増やすと単調に減り、ほぼ $0$ に収束 &
+実装は正しく、この擬ポテンシャルでは二重交換子項が無視できる。 \\[2mm]
+\file{nstate} を増やすと\textbf{有限値に収束} &
+実装は正しいが、\ref{sec:vnl-sumrule} 節の既約誤差が効いている。
+収束値が二重交換子項の大きさに対応する。 \\[2mm]
+\file{nstate} を増やしても減らない、または増える &
+\textbf{実装バグ。} ここで初めて疑うべき。 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+単一の \file{nstate} での値だけでは
+(a) バンド打ち切り誤差と (b) 二重交換子誤差を分離できない点に注意する。
+
+\paragraph{方法 B：エルミート性チェック（最も安価・I/O 全経路を一括検査）}
+$\vp$ も $-i[\vr,V_{\mathrm{NL}}]$ もエルミート演算子であり、
+特に $-i[\vr,V_{\mathrm{NL}}] = -i(X - X^\dagger)$ の形をしているため、
+代数的に厳密な恒等式
+%
+\begin{equation}
+  p_{nm}^\alpha(\vk) = \bigl(p_{mn}^\alpha(\vk)\bigr)^{\!*},
+  \qquad
+  \mathrm{rvnl}_{nm}^\alpha(\vk) = \bigl(\mathrm{rvnl}_{mn}^\alpha(\vk)\bigr)^{\!*}
+  \label{eq:hermiticity-check}
+\end{equation}
+%
+が成り立つ。\file{\_tm.data} を読んで
+$\max_{\vk,n,m,\alpha} |M_{nm}^\alpha - (M_{mn}^\alpha)^*|$ を測るだけで、
+生成 $\to$ ファイル書式 $\to$ 読み込みの全経路を検査できる。
+これが有意に破れていれば、\ref{sec:vnl-verify} 節冒頭の「規約は正しい」という結論が覆る。
+
+\paragraph{方法 C：$\vp$ のみと $\vp + \mathrm{rvnl}$ の比較}
+方法 A を \verb|matrix_v| $\to$ \verb|matrix_p| に差し替えて実行し、残差を比較する。
+\begin{itemize}
+\item 正しい実装なら $R(\vp+\mathrm{rvnl}) \ll R(\vp)$ となるはず
+      （非局所補正が和則を大きく改善する）。
+\item \textbf{$R(\vp+\mathrm{rvnl}) > R(\vp)$ となった場合は符号または添字の誤り}であり、
+      方法 B と併せれば決定的な証拠になる。
+\end{itemize}
+
+%----------------------------------------------------------------------
+\subsection{想定される実装の問題点（優先順位順）}
+
+\begin{table}[htbp]
+\centering
+\caption{非局所擬ポテンシャル補正まわりで想定される問題点}
+\label{tab:vnl-issues}
+\begin{tabular}{@{}p{8mm}p{48mm}p{72mm}p{16mm}@{}}
+\toprule
+\textbf{\#} & \textbf{箇所} & \textbf{内容} & \file{norder}\newline\file{=0} \\
+\midrule
+P1 &
+\file{gs\_info\_ssbe.f90:274}（概念） &
+$O(A^2)$ 非局所項の欠落。本体 RT は $\vk+\vA$ で厳密、SBE は 1 次打ち切り
+（式 \eqref{eq:vnl-gauge}）。強電場ほど悪化する。 &
+する \\[3mm]
+
+P2 &
+\file{write.f90:393} 付近 &
+出力書式が \verb|9000 format(3i8,6e18.5)|。Fortran の \verb|Ew.d| は
+\verb|0.ddddd E±ee| 形式なので\textbf{有効数字 5 桁}しかない。
+すぐ上に \verb|!9000 format(3i8,6e18.10)| がコメントアウトで残っている。
+和則は $N_e \vA$ との相殺で成立するため、相対誤差 $\sim 10^{-5}$ の
+数値的な床（floor）ができる。 &
+する \\[3mm]
+
+P3 &
+\file{write.f90:172--178} &
+軌道並列化の禁止ガードがコメントアウトされている。元の文言は
+「Only \verb!<u|p|u>! is printed (pseudopotential terms are
+not printed)」。現状は \file{io\_s:io\_e} と
+\verb|comm_summation(icomm_ko)| でリファクタ済みだが、
+軌道並列時の \file{rvnl\_tm\_matrix} の正しさが明示的に検証された形跡がない。 &
+する \\[3mm]
+
+P4 &
+\file{bloch\_solver\_ssbe.f90}\newline\file{:103--106, 124--144, 176--230} &
+\file{norder\_correction} ブロックが\textbf{ \file{p\_tm\_matrix} のみ}を使い、
+\file{rvnl} を一切使わない。伝播は $\vp+\mathrm{rvnl}$（フラグ次第）、
+補正は $\vp$ のみという不整合。 &
+しない \\[3mm]
+
+P5 &
+\file{bloch\_solver\_ssbe.f90:434} &
+\verb|calc_energy| だけ \file{p\_mod\_matrix}（\file{rvnl} 常時込み）を使用。
+フラグ off だと、伝播に使うハミルトニアンと評価に使うハミルトニアンが
+食い違う（\ref{sec:energy} 節と同じ問題）。 &
+しない \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{P2 と P3 は既存の \file{\_tm.data} を見るだけで今すぐ確認できる：}
+\begin{itemize}
+\item P2 --- 手元の \file{\_tm.data} を 1 行見れば、実際の有効桁数がすぐわかる。
+\item P3 --- 同一系を \file{nproc\_ob=1} と \file{nproc\_ob>1} の 2 通りで
+      GS 計算し、生成された \file{\_tm.data} を \verb|diff| するだけでよい。
+\end{itemize}
+
+%----------------------------------------------------------------------
+\subsection{推奨する検証の順序}
+
+\begin{enumerate}
+\item \textbf{方法 B（エルミート性）}を実行し、
+      「規約は正しい」という結論を独立に検証する（数分で可能）。
+\item \textbf{P2}（出力桁数）を確認する。既存の \file{\_tm.data} を見るだけでよい。
+\item \textbf{方法 A（\texttt{sigma\_intra}）}を \file{nstate} 3--4 点で実行し、
+      収束の様子から「実装バグ」か「既約誤差（式 \eqref{eq:sumrule-residual}）」かを分離する。
+\item 上記の結果を踏まえて仮説を 1 つに絞り、最小の変更で検証する
+      （systematic-debugging の Phase 3 に相当）。
+\end{enumerate}
+
+%======================================================================
+\section{Codex による \texttt{norder\_correction} 分析（\texttt{comment.tex}）の検証}
+\label{sec:codex-review}
+
+同ディレクトリに置かれた \file{comment.tex} は、別の AI エージェント
+（Codex）による \file{norder\_correction} の診断と修正パッチの記録である。
+以下ではその内容を要約し、実際のソースコードと突き合わせて検証する。
+
+結論を先に述べる。\textbf{引用されたソースコードは実際のコードと完全に
+一致しており、提案パッチは理論論文 \cite{yakovlev2017} の Eq.~(20) を
+正確に実装している}（\ref{sec:vlad} 節で照合）。
+一方で、\textbf{診断の一部は根拠が不十分なまま述べられており、
+そのまま信頼するのは危険である。} 特に、\textbf{現行実装の本質的な欠陥
+（\ref{sec:codex-deriv} 節で導出する 2 つの符号・欠落項の問題）は
+\file{comment.tex} では特定されていない。}
+
+%----------------------------------------------------------------------
+\subsection{comment.tex の主張の要約（解説）}
+
+\file{comment.tex} は大きく 3 部からなる。
+
+\begin{enumerate}
+\item \textbf{診断}: \file{norder\_correction=1}（1 次補正、
+      \file{bloch\_solver\_ssbe.f90:98--118}）には 4 つの問題があると主張する
+      （\ref{sec:codex-issues} 節で個別に評価する）。
+\item \textbf{パッチ}: 毎ステップの帯域和を、基底状態の占有数から
+      \emph{一度だけ}計算する $3\times3$ テンソル \verb|corr1_tensor| に
+      置き換える（\file{comment.tex:62--160}）。
+      符号は「\texttt{+} にすると B64/B128 で位相が $180^\circ$ 反転したため
+      \texttt{-} に確定した」と経験的に決定されたと記述されている
+      （\file{comment.tex:131}）。
+      このパッチは別ブランチ「\texttt{SALMON-v.2.2.2-fullvel-corr1}」として
+      実装されており、\textbf{本リポジトリには存在しない}
+      （\verb|corr1_tensor|, \verb|prepare_first_order_correction| を
+      本ツリー全体で検索したが該当なし）。
+\item \textbf{ベンチマーク}: Si を用いた強度スキャン・32 バンド SBE 計算の
+      系統的な比較を根拠に、無補正の SBE が弱電場極限で TDDFT に対し
+      16--26\% 程度大きい誘電率・電流を与えると報告している
+      （\file{comment.tex:166--227}）。
+\end{enumerate}
+
+%----------------------------------------------------------------------
+\subsection{ソースコード引用の正確性}
+
+\file{comment.tex} が引用する 4 箇所のコード
+（\file{bloch\_solver\_ssbe.f90:98--118}, \file{:308--311},
+ \file{realtime\_ssbe.f90:38--40}, \file{multiscale\_ssbe.f90:118--122}）は、
+すべて本ツリーの実際のソースコードと完全に一致する。
+パッチ本体は本ツリーには存在せず、これは「upstream の作業ツリーは
+変更していない」という \file{comment.tex} 自身の記述と整合する。
+
+%----------------------------------------------------------------------
+\subsection{4 つの指摘の評価}
+\label{sec:codex-issues}
+
+\begin{table}[htbp]
+\centering
+\caption{comment.tex が挙げる 4 つの問題点の評価}
+\label{tab:codex-issues}
+\begin{tabular}{@{}p{8mm}p{58mm}p{78mm}@{}}
+\toprule
+\# & \textbf{comment.tex の主張} & \textbf{評価} \\
+\midrule
+1 &
+補正が \file{p\_tm\_matrix} のみを使い \file{rvnl\_tm\_matrix} を使わない。 &
+\textbf{正しい。} \file{:103--106} を確認済み。直上の主要項
+（\file{:87--91}）は \file{flag\_vnl\_correction} が立てば \file{rvnl} を
+加算するため、演算子の選び方が補正項と主要項で食い違っている。 \\[2mm]
+
+2 &
+係数に実時間の \verb|sbe%rho(nb,nb,ik)| を使っており、
+基底状態の \verb|gs%occup(nb,ik)| を使うべきである。 &
+事実として正しいが、\textbf{根拠が示されていない}
+（なぜ \file{gs\%occup} でなければならないかの導出がない）。
+$\rightarrow$ \ref{sec:codex-deriv} 節でより説得力のある根拠を与える。 \\[2mm]
+
+3 &
+計算された補正項が、既に伝播済みの電流に単純加算されるだけで、
+明示的な残差として引き算されていない。 &
+方向性は妥当だが\textbf{記述が誤解を招く}。
+\file{comment.tex:42} は反磁性項 $A\,\Tr(\rho)/\Omega$ の保持を
+あたかも問題点の一部であるかのように書いているが、
+\textbf{この項の保持自体は正しく、除去や修正の対象ではない}
+（式 \eqref{eq:jcode} 参照）。問題は補正項自体の中身にある。 \\[2mm]
+
+4 &
+帯域・k 点の全和が毎時間ステップ計算され非効率。 &
+\textbf{正しい。} 加えて（\file{comment.tex} は触れていないが）
+このブロックは OpenMP 並列化されていない。 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%----------------------------------------------------------------------
+\subsection{根本原因：何が壊れているか}
+\label{sec:codex-deriv}
+
+\paragraph{和則の符号}
+式 \eqref{eq:fsum} を、式 \eqref{eq:effmass} と同じ $\vk\cdot\vp$ 摂動論
+（有効質量和則）から導出すると
+%
+\begin{equation}
+  \sum_{n \in \mathrm{occ}} \sum_{m\ (\text{全バンド})}
+  \frac{2\,\Real\bigl[p^\alpha_{nm} p^\beta_{mn}\bigr]}{\eps_m - \eps_n}
+  = +N_e\,\delta^{\alpha\beta}
+  \label{eq:fsum-corrected}
+\end{equation}
+%
+となる。右辺の符号が正であることが以下の議論で本質的に効く。
+
+\paragraph{断熱線形応答の計算}
+以下、原子単位系（$\hbar=e=m_0=1$）を用いる。
+静的な摂動 $W = \vA\cdot\vp$ に対する線形応答の密度行列は
+$\rho^{(1)}_{nm} = (f_m-f_n)\,W_{nm}/(\eps_m-\eps_n)$ で与えられるから、
+保持空間 $P$（$\file{sbe\%nb}$ バンド）内での常磁性電流は
+%
+\begin{equation}
+  \Tr\bigl[\rho^{(1)}\,p^\alpha\bigr] = -\sum_\beta S_P^{\alpha\beta}A^\beta,
+  \qquad
+  S_P^{\alpha\beta}\equiv
+  \sum_{n\in\mathrm{occ}}\sum_{i\in P,\,i\neq n}
+  \frac{2 f_n\,\Real\bigl[p^\beta_{ni}\,p^\alpha_{in}\bigr]}{\eps_i-\eps_n}
+  \label{eq:SP-def}
+\end{equation}
+%
+となる。式 \eqref{eq:fsum-corrected} はまさに
+$\lim_{P\to\text{完全}} S_P^{\alpha\beta} = N_e\,\delta^{\alpha\beta}$
+を述べたものである。
+
+\paragraph{決定的な点：$\Tr[\rho\,\vp]$ 自体が既に $-S_P\vA$ を含む}
+\textbf{ここが本節の核心である。}
+SBE は保持空間内で $H = \eps + \vA\cdot\vp$ により $\rho$ を伝播させるので、
+断熱極限において $\rho$ は\emph{自動的に} $\rho^{(0)}+\rho^{(1)}$ に到達する。
+したがって式 \eqref{eq:jcode} の第 1 項は
+%
+\begin{equation}
+  \Tr[\rho\,p^\alpha] \;\xrightarrow[\text{断熱極限}]{}\;
+  \underbrace{\Tr[\rho^{(0)}p^\alpha]}_{=\,0\ (\text{時間反転対称な絶縁体})}
+  \;-\;\sum_\beta S_P^{\alpha\beta}A^\beta
+  \label{eq:trrho-adiabatic}
+\end{equation}
+%
+となる。すなわち\textbf{打ち切り基底での断熱線形応答は、補正項を足さなくても
+既に伝播結果の中に含まれている。} 補正項の役割は、これを\emph{打ち消して}
+$\vA$ に比例する偽電流を除去することであって、\emph{さらに足し込む}ことではない。
+
+\paragraph{現行コードの帰結}
+現行コード（式 \eqref{eq:corr1}）は $\Delta j^\alpha = -S_P^{\alpha\beta}A^\beta/\Omega$
+を \verb|tmp1| に加算する。式 \eqref{eq:jcode} の反磁性項
+$+N_e\vA/\Omega$ および式 \eqref{eq:trrho-adiabatic} と合わせると
+%
+\begin{equation}
+  j^\alpha_{\text{norder}=1}
+  \;\xrightarrow[\text{断熱極限}]{}\;
+  \frac{1}{\Omega}\Bigl[\,N_e A^\alpha - 2\sum_\beta S_P^{\alpha\beta}A^\beta\,\Bigr]
+  \;\xrightarrow[S_P\to N_e]{}\;
+  -\frac{N_e}{\Omega}A^\alpha
+  \label{eq:corr-net}
+\end{equation}
+%
+となる。\textbf{補正なしなら $(N_e\delta-S_P)\vA/\Omega\to 0$ と正しくゼロに
+収束するのに対し、\file{norder\_correction=1} を有効にすると、
+基底が良いほど反磁性項と同じ大きさで符号の反転した偽電流が現れる。}
+これは \file{comment.tex} が報告する「\file{norder\_correction=1} は
+不一致を\emph{拡大}する」という実測と定量的に整合する。
+
+正しい補正は、式 \eqref{eq:corr-net} の第 1 項を打ち消し、かつ
+式 \eqref{eq:trrho-adiabatic} の $-S_P\vA$ を打ち消すもの、すなわち
+%
+\begin{equation}
+  \Delta j^\alpha_{\text{correct}}
+  = \frac{1}{\Omega}\Bigl[\,-N_e A^\alpha + \sum_\beta S_P^{\alpha\beta}A^\beta\,\Bigr]
+  \label{eq:corr-correct}
+\end{equation}
+%
+でなければならない。これは \ref{sec:vlad} 節で示すとおり、
+理論論文 \cite{yakovlev2017} の Eq.~(20) そのものである。
+
+\paragraph{現行コードの 2 つの欠陥}
+式 \eqref{eq:corr1} と式 \eqref{eq:corr-correct} を比較すると、
+現行実装には\textbf{独立な 2 つの欠陥}がある。
+
+\begin{enumerate}
+\item \textbf{$S_P$ 項の符号が逆。} 必要なのは $+S_P\vA/\Omega$ だが、
+      コードは $-S_P\vA/\Omega$ を加えている。
+\item \textbf{$-N_e\vA/\Omega$ 項が丸ごと欠落している。}
+      式 \eqref{eq:jcode} の反磁性項を相殺する項が実装されていない。
+\end{enumerate}
+
+これに加えて、\ref{sec:vlad} 節で述べるとおり、
+占有数に $f_n$ ではなく実時間の $\rho_{nn}(t)$ を用いている点が
+第 3 の逸脱となる。
+
+\paragraph{和の範囲は正しい}
+一方、$i$ の和の範囲は現行実装のままで正しい。
+論文 \cite{yakovlev2017} は Eq.~(19) 直後で
+「和は $J_N(t)$ の評価に用いたバンドについてのみ行う」と明記し、
+$\sum_{i\neq n}$ を $\sum^{N}_{i\neq n}$ と書き換えている。
+すなわち\textbf{\texttt{do ib = 1, sbe\%nb} という範囲は論文の処方箋と一致する。}
+欠陥は和の範囲ではなく、上記の符号と欠落項にある。
+
+%----------------------------------------------------------------------
+\subsection{Codex パッチの評価}
+
+\ref{sec:vlad} 節で論文と照合した結果、\textbf{Codex のパッチは
+論文 \cite{yakovlev2017} の Eq.~(20) を符号変換込みで正確に実装している}
+ことが確認できた。すなわち、パッチが構成するテンソルは
+%
+\begin{equation}
+  \texttt{corr1\_tensor}^{\alpha\beta}
+  = \frac{1}{\Omega}\bigl(N_e\,\delta^{\alpha\beta} - S_P^{\alpha\beta}\bigr)
+  = \Delta \mathbf{J}^{(1)}\ \text{の係数（論文 Eq.~(20)）}
+  \label{eq:codex-tensor}
+\end{equation}
+%
+であり、これを \verb|jmat| から\emph{引く}操作
+（\file{comment.tex:128}）は $\Delta j = -\Delta J^{(1)}$、
+すなわち式 \eqref{eq:corr-correct} と完全に一致する。
+
+\ref{sec:codex-deriv} 節で述べたとおり、パッチが実質的に修正しているのは
+「$i$ の和の範囲」ではなく、\textbf{(a) $S_P$ 項の符号、(b) 欠落していた
+$N_e\vA$ 項、(c) 占有数の固定}という 3 点である。
+\file{comment.tex} が挙げる 4 つの指摘のうち、(a) と (b) は
+\textbf{明示的に言及されていない}にもかかわらず、
+パッチではいずれも正しく修正されている。
+経験的に決定されたとされる符号（\file{comment.tex:131}）も、
+式 \eqref{eq:corr-correct} により解析的に裏付けられた。
+
+なお、パッチが \verb|min(gs%ne/2, sbe%nb)| を用いている点
+（\file{comment.tex:81}）は、\ref{sec:norder} 節「デバッグ上の要注意点」で
+指摘した\textbf{元コードの配列外参照の可能性}
+（\file{nstate\_sbe < nelec/2} のとき \file{sbe\%rho(nb,nb,ik)} が
+確保範囲外を参照しうる問題）を偶然修正している。
+\file{comment.tex} 自身はこれを意図した修正として記述していない。
+
+%----------------------------------------------------------------------
+\subsection{Codex の記述のうち、危ういと判断した箇所}
+\label{sec:codex-risky}
+
+\file{comment.tex} の記述のうち、そのまま信頼するのは危険と判断した箇所を、
+私の補足とともに挙げる。
+
+\begin{table}[htbp]
+\centering
+\caption{comment.tex の記述で注意を要する箇所}
+\label{tab:codex-risky}
+\begin{tabular}{@{}p{30mm}p{113mm}@{}}
+\toprule
+\textbf{箇所} & \textbf{補足} \\
+\midrule
+指摘 2\newline（\file{:41}） &
+「\verb|gs%occup| を使うべき」という結論は妥当だが、根拠なく断定されている。
+正しい根拠は \ref{sec:codex-deriv} 節のとおり「和則の導出自体が
+基底状態占有数を前提にしている」ことであり、\emph{単なる設計上の
+好みの問題ではない}。 \\[2mm]
+
+指摘 3\newline（\file{:42}） &
+反磁性項 $A\,\Tr(\rho)/\Omega$ の保持を、あたかも問題点の一部であるかの
+ように記述している。\textbf{この項は式 \eqref{eq:jcode} の正しい構成要素
+であり、除去や修正の対象ではない。} 問題は補正項 $\Delta j$ 自体の
+中身にある。 \\[2mm]
+
+符号の決定方法\newline（\file{:131}） &
+「\texttt{+} 符号だと位相が $180^\circ$ 反転したので \texttt{-} と分かった」
+という\textbf{経験的な符号決定}が唯一の根拠として記述されている。
+これは方法論的に弱い。二つの独立した誤り（符号違いと係数違い）が
+偶然打ち消し合って「それらしい」結果を与える可能性を排除できないため、
+\ref{sec:codex-deriv} 節のような解析的導出による確認が本来必要である
+（今回は幸い、解析的導出も \texttt{-} 符号を支持する結果になった）。 \\[2mm]
+
+\file{norder\_correction}\newline\file{=2} との組み合わせ &
+\file{comment.tex} は「2 次以上の補正が\emph{まだ}非局所ゲージ整合的でない」
+とスコープの限定として書いているが、より深刻なリスクを見落としている。
+2 次ブロック（\file{:120--170}）は\emph{元の}（パッチ前の）1 次ブロックの
+上に積み増される設計だった可能性があり、1 次ブロックだけを新しい
+テンソル減算に置き換えると、2 次ブロックとの組み合わせ方が\emph{以前とは
+違う意味で}破綻しうる。単に「未検証」ではなく「新たな不整合を
+生みうる」と明記すべきだった。 \\[2mm]
+
+ベンチマーク数値\newline（強度スキャン表、\newline B32 集計表など） &
+これらは別ブランチ「\texttt{SALMON-v.2.2.2-fullvel-corr1}」上で実行された
+結果であり、\textbf{本リポジトリにはコードも出力データも存在しない。}
+ソースコードの論理は検証できたが、\textbf{報告されている数値
+（H1 比 1.231、$\Real\,\epsilon=20.11$ 等）は独立に再現・検証できていない。}
+これらは「Codex の報告をそのまま引用したもの」として扱うべきであり、
+検証済みの事実として引用しないよう注意する。 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%----------------------------------------------------------------------
+\subsection{推奨される次の一歩}
+
+\begin{enumerate}
+\item \textbf{占有数の選択を切り分けるテスト。}
+      \file{norder\_correction=1} を、(a) 元コードのまま
+      （\verb|sbe%rho(nb,nb,ik)|）、(b) \verb|gs%occup(nb,ik)| に
+      置き換えたもの、の 2 通りで実行し、\emph{弱電場・線形応答領域}で
+      両者が一致するかを見る。一致しなければ、\ref{sec:codex-deriv} 節
+      「未解決の点」に述べた別要因の存在が確定する。
+\item \textbf{\file{nstate\_sbe} を \file{nstate} に近づける収束テスト。}
+      式 \eqref{eq:corr-net} の予言どおり、\file{norder\_correction=1} を
+      有効にした電流が $\Tr[\rho p]/\Omega$（常磁性項のみ）に収束するかを
+      確認する。収束しなければ \ref{sec:codex-deriv} 節の解析そのものに
+      見落としがある。
+\item \textbf{\file{norder\_correction=2} との組み合わせの回帰テスト。}
+      パッチ適用後、\file{norder\_correction=1} 単独と
+      \file{norder\_correction=2}（1 次 $+$ 2 次）の結果を比較し、
+      2 次ブロックが意図しない二重計上を起こしていないか確認する。
+\item \textbf{ベンチマーク数値の独立再現。}
+      可能であれば、Codex の別ブランチの結果を本リポジトリ上で
+      同一条件により再現し、報告値と照合する。
+\end{enumerate}
+
+%======================================================================
+\section{理論論文（Yakovlev \& Wismer 2017）との対応検証}
+\label{sec:vlad}
+
+\file{norder\_correction} の理論的根拠は、同ディレクトリに置かれた
+\file{vlad.pdf}、すなわち
+
+\begin{quote}
+V.~S.~Yakovlev and M.~S.~Wismer,
+``Adiabatic corrections for velocity-gauge simulations of electron dynamics
+in periodic potentials'',
+\emph{Comput. Phys. Commun.} \textbf{217} (2017) 82--88.
+\href{https://doi.org/10.1016/j.cpc.2017.04.010}{doi:10.1016/j.cpc.2017.04.010}
+\end{quote}
+
+である。本節ではこの論文の処方箋と現行実装を式単位で突き合わせる。
+
+%----------------------------------------------------------------------
+\subsection{論文の骨格}
+
+論文の中心的なアイデアは Eq.~(11) である：
+%
+\begin{equation}
+  \Delta \mathbf{J}_N
+  = \lim_{\gamma\to0^+}\lim_{\omega_0\to0}\bigl[\mathbf{J}(t) - \mathbf{J}_N(t)\bigr]
+  = \mathbf{J}_{\mathrm{ad}} - \lim_{\gamma\to0^+}\lim_{\omega_0\to0}\mathbf{J}_N .
+  \label{eq:vlad-11}
+\end{equation}
+%
+ここで $\mathbf{J}_N$ は $N$ バンドの打ち切り基底で数値的に得られた電流密度、
+$\mathbf{J}_{\mathrm{ad}}$ は断熱極限（$\omega_0\to0$、$|\mathbf{a}|$ 固定）
+での厳密な電流密度である。
+
+\textbf{誘電体では $\mathbf{J}_{\mathrm{ad}}\equiv 0$} であるから、
+補正とは「打ち切り基底で計算した電流の断熱極限を\emph{まるごと引き算する}」
+操作にほかならない。この観点は
+\ref{sec:codex-deriv} 節の式 \eqref{eq:trrho-adiabatic} と完全に対応する。
+
+1 次の結果が Eq.~(20) である（原子単位系、$\hbar=e=m_0=1$）：
+%
+\begin{equation}
+  \Delta \mathbf{J}^{(1)}_{\mathrm{dielectric}}
+  = \frac{1}{\Omega}\left[\,
+      N_{\mathrm{VB}}\,\vA
+      \;-\; 2\sum_{n\in\mathrm{VB}}\ \sum_{i\neq n}^{N}
+        \frac{\Real\bigl[(\vp_{ni}\cdot\vA)\,\vp_{in}\bigr]}{\omega_{in}}
+    \,\right],
+  \label{eq:vlad-20}
+\end{equation}
+%
+ここで $N_{\mathrm{VB}}=\sum_{n\in\mathrm{occ}}f_n$ は補正を適用する
+シミュレーションにおける価電子バンド数（SALMON の \verb|calc_trace| が
+返す $N_e$ に対応）、$\omega_{in}=\eps_i-\eps_n$ である。
+
+論文が明示している重要な 2 点を記録しておく。
+
+\begin{itemize}
+\item \textbf{$i$ の和は打ち切り基底の中を走る。}
+      Eq.~(19) 直後に「summation is performed only over those bands that
+      $J_N(t)$ was evaluated with」と述べ、
+      $\sum_{i\neq n}$ を $\sum^{N}_{i\neq n}$ と明示的に書き換えている。
+\item \textbf{$f_n(\vk)$ は初期定常状態の占有数である。}
+      Eq.~(5) の直後に「$f_n(\vk)$ is the Fermi factor of band $n$ in the
+      initial (stationary) state」と定義され、
+      Eq.~(27) の後には「These coefficients depend only on the stationary
+      electronic structure of the solid, and they do not depend on the laser
+      pulse」と明記されている。
+\end{itemize}
+
+さらに Eq.~(24) は補正を
+$\Delta J(t) = \sum_q c_q A^q(t)$、すなわち
+\textbf{パルスに依存しない係数 $c_q$ とベクトルポテンシャルの冪の積}
+として書けることを示している。これは Codex パッチの
+\verb|corr1_tensor| の設計そのものである。
+
+%----------------------------------------------------------------------
+\subsection{符号規約の整合}
+\label{sec:vlad-sign}
+
+比較にあたり符号規約を確定させる必要がある。
+論文 Eq.~(6) は（原子単位系で）
+%
+\begin{equation}
+  \mathbf{j}_{n\vk}(t) = -\Bigl(\vA(t) + \Real\bigl[\textstyle\sum_{ij}
+    \alpha^*_{i\vk}\alpha_{j\vk}\,\vp_{ij}(\vk)\bigr]\Bigr)
+  \label{eq:vlad-6}
+\end{equation}
+%
+であり、電子の電荷 $-e$ に由来する全体符号 $-$ が付く。
+一方 SALMON の \verb|jmat| は
+%
+\begin{equation}
+  \texttt{jmat} = \frac{1}{\Omega}\bigl[\Tr(\rho\,\vp) + N_e\vA\bigr]
+  = -\,\mathbf{J}_{\mathrm{paper}}
+  \label{eq:jmat-sign}
+\end{equation}
+%
+すなわち\textbf{電子流束}である
+（根拠：\file{multiscale\_ssbe.f90:201} の
+ \verb|vec_j_em = -Jmat_macro|、および
+ \file{realtime\_ssbe.f90:75} の \verb|dot_product(E, -Jmat)|）。
+
+したがって\textbf{コードが実装すべきは $-\Delta\mathbf{J}^{(1)}$ である}：
+%
+\begin{equation}
+  \Delta(\texttt{jmat})
+  = -\Delta \mathbf{J}^{(1)}
+  = \frac{1}{\Omega}\left[\,
+      -N_e\vA
+      \;+\; 2\sum_{n}\sum_{i\neq n}^{N}
+        \frac{\Real\bigl[(\vp_{ni}\cdot\vA)\,\vp_{in}\bigr]}{\omega_{in}}
+    \,\right].
+  \label{eq:vlad-required}
+\end{equation}
+%
+これは \ref{sec:codex-deriv} 節で独立に導いた式 \eqref{eq:corr-correct} と
+\textbf{完全に一致する}。二つの独立な経路が同じ結論に到達したことで、
+\ref{sec:codex-deriv} 節の導出の正しさが裏付けられた。
+
+%----------------------------------------------------------------------
+\subsection{対応表}
+
+\begin{table}[htbp]
+\centering
+\caption{論文 \cite{yakovlev2017} と \file{bloch\_solver\_ssbe.f90} の対応}
+\label{tab:vlad-map}
+\begin{tabular}{@{}p{34mm}p{46mm}p{46mm}p{16mm}@{}}
+\toprule
+\textbf{論文} & \textbf{内容} & \textbf{コード} & \textbf{判定} \\
+\midrule
+Eq.~(2) $\vp_{nm}(\vk)$ &
+運動量行列要素 &
+\file{gs\%p\_tm\_matrix} &
+一致 \\[2mm]
+
+Eq.~(5), (6) $\mathbf{J}_N$ &
+打ち切り基底での電流 &
+\file{:84--95} $+$ \file{:310--311} &
+一致\newline（符号規約は式 \eqref{eq:jmat-sign}） \\[2mm]
+
+Eq.~(19) $\sum^{N}_{i\neq n}$ &
+和は打ち切り基底内 &
+\verb|do ib = 1, sbe%nb| &
+一致 \\[2mm]
+
+Eq.~(20) 第 1 項\newline $+N_{\mathrm{VB}}\vA$ &
+反磁性項の相殺 &
+\textbf{対応物なし} &
+\textbf{欠落} \\[2mm]
+
+Eq.~(20) 第 2 項\newline $-2\sum\Real[\cdots]/\omega_{in}$ &
+打ち切り常磁性応答の相殺 &
+\file{:109--111}\newline（符号が逆） &
+\textbf{符号誤り} \\[2mm]
+
+Eq.~(5) 後の $f_n(\vk)$ &
+初期定常状態の占有数 &
+\verb|sbe%rho(nb,nb,ik)|\newline（時間依存） &
+\textbf{不一致} \\[2mm]
+
+Eq.~(27) 後の記述 &
+係数はパルスに依存しない\newline（一度だけ計算可） &
+毎時間ステップ再計算 &
+不一致\newline（性能） \\[2mm]
+
+Eq.~(22) 2 次 &
+波括弧内の項構成 &
+\file{:120--170} &
+構造は一致\newline（下記注意） \\[2mm]
+
+Eq.~(23) 3 次 &
+波括弧内の項構成 &
+\file{:172--306} &
+構造は一致\newline（下記注意） \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{2 次・3 次についての注意}
+\file{:120--170} および \file{:172--306} は、論文 Eq.~(22), (23) の
+\emph{波括弧内の相対符号}とは一致している。例えば 2 次の後半ブロック
+（\file{:157--165}）の
+%
+\begin{lstlisting}[firstnumber=157,caption={2 次補正の対角 counter-term（抜粋）},numbers=none]
+2*pnn_Ac*dble(pni(idir)*pin_Ac) + pnn(idir)*abs(pni_Ac)**2
+\end{lstlisting}
+%
+を $\omega_{in}^2$ で割る構造は、Eq.~(22) 末項と同一である。
+しかし \ref{sec:vlad-sign} 節で述べた全体符号の問題は 1 次と同様に存在する。
+
+\textbf{ただし、2 次・3 次の添字（$\vp_{ji}$ か $\vp_{jn}$ か等）は
+PDF から目視で確定できなかったため、本レポートでは断定を避ける。}
+1 次と同じ全体符号の逸脱があると推定されるが、
+\textbf{これは原論文の電子版または補足資料に当たって確認すべき事項である。}
+
+%----------------------------------------------------------------------
+\subsection{論文が扱っていない範囲（コード固有のリスク）}
+
+\begin{table}[htbp]
+\centering
+\caption{論文の適用範囲外にあり、SALMON 実装で追加のリスクとなる要素}
+\label{tab:vlad-outofscope}
+\begin{tabular}{@{}p{40mm}p{105mm}@{}}
+\toprule
+\textbf{項目} & \textbf{内容} \\
+\midrule
+\textbf{非局所擬ポテンシャル} &
+論文は\textbf{局所ハミルトニアンを仮定}している
+（Conclusions の「a model dielectric described by a local Hamiltonian」、
+ および Section~4 の 1 次元モデル Eq.~(28)）。
+Eq.~(18) の Thomas--Reiche--Kuhn 和則も局所ポテンシャル前提である。
+\ref{sec:vnl-truncation} 節で示した二重交換子項は論文の枠外にあり、
+Codex パッチが行う $\vp\to\vv$（\file{rvnl} 込み）の置換は
+\textbf{論文に直接の根拠がない拡張}である。 \\[2mm]
+
+\textbf{エネルギー分母の\newline カットオフ} &
+SALMON の $|\Delta\eps| > 10^{-3}$~a.u.\ というハードカット
+（\file{:108} 等）は論文には存在しない。論文の $\omega_{in}$ 分母は
+無制限である。準縮退バンドの扱いは実装固有の判断であり、
+\ref{sec:norder} 節で述べたとおり結果の不連続性を招きうる。 \\[2mm]
+
+\textbf{Eq.~(20) の適用条件} &
+Eq.~(20) は $\mathbf{J}_{\mathrm{ad}}\equiv 0$、すなわち
+\textbf{価電子バンドが完全占有された誘電体}を前提とする。
+時間依存 $\rho_{nn}(t)$ を用いるとこの前提自体が
+実時間発展の途中で崩れる。これは
+\ref{sec:codex-deriv} 節で述べた第 3 の逸脱の物理的意味である。 \\[2mm]
+
+\textbf{適用実績の範囲} &
+論文の数値実証（Fig.~1--4）は\textbf{1 次元モデル系}に限られる。
+3 次元・実材料（Si 等）・非局所擬ポテンシャルの組み合わせでの
+検証は論文の範囲外である。 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%----------------------------------------------------------------------
+\subsection{結論}
+
+\begin{enumerate}
+\item \textbf{現行の \file{norder\_correction=1} は論文 Eq.~(20) を
+      正しく実装していない。} $S_P$ 項の符号が逆であり、
+      $-N_e\vA$ 項が欠落している（\ref{sec:codex-deriv} 節、
+      表 \ref{tab:vlad-map}）。
+\item \textbf{その帰結は式 \eqref{eq:corr-net} のとおり}で、
+      良い基底ほど反磁性項と同じ大きさの符号反転した偽電流が現れる。
+      これは \file{comment.tex} の実測報告と整合する。
+\item \textbf{Codex パッチは論文 Eq.~(20) を正確に実装しており、
+      採用に値する}（\ref{sec:codex-issues} 節、式 \eqref{eq:codex-tensor}）。
+\item \textbf{一方、非局所擬ポテンシャルへの拡張は論文の範囲外}であり、
+      \ref{sec:vnl-verify} 節で述べた検証（和則残差 \verb|sigma_intra| の
+      \file{nstate} 収束性）と併せて確認する必要がある。
+\item \textbf{2 次・3 次については本レポートでは結論を出していない。}
+      添字の確定には原論文の電子版に当たる必要がある。
+      パッチ適用後に \file{norder\_correction=2} を使う場合は
+      \ref{sec:codex-risky} 節の警告が該当する。
+\end{enumerate}
+
+%======================================================================
+\section{推奨する最小限のコード修正}
+\label{sec:patch}
+
+\ref{sec:codex-deriv} 節および \ref{sec:vlad} 節で特定した
+1 次補正の欠陥を、\textbf{既存のコード構造を保ったまま最小の変更で}
+修正する案を示す。変更は \file{bloch\_solver\_ssbe.f90} の\textbf{3 箇所のみ}で、
+新しいサブルーチンもデータ構造の追加も必要ない。
+
+%----------------------------------------------------------------------
+\subsection{修正の方針}
+
+現行実装が \verb|tmp1| に加算している量は、絶対値としては
+\emph{既に正しい} $S_P\vA$（式 \eqref{eq:SP-def}）である。
+欠けているのは符号と反磁性項の相殺だけなので、以下の 3 点で足りる。
+
+\begin{enumerate}
+\item \textbf{符号を反転する}（$-\to+$）。
+      式 \eqref{eq:corr-correct} が要求するのは $+S_P\vA/\Omega$ である。
+\item \textbf{占有数を基底状態のものに固定する}
+      （\verb|sbe%rho(nb,nb,ik)| $\to$ \verb|gs%occup(nb,ik)|）。
+      論文 \cite{yakovlev2017} の $f_n(\vk)$ は初期定常状態の
+      Fermi 因子であり、実時間の占有数ではない。
+\item \textbf{反磁性項を除去する}（\file{norder\_correction} $\ge 1$ のとき）。
+      式 \eqref{eq:vlad-20} の $N_{\mathrm{VB}}\vA$ が
+      式 \eqref{eq:jcode} の $N_e\vA$ をちょうど打ち消す。
+\end{enumerate}
+
+修正 2 には副次的な利点がある。\verb|gs%occup| は
+\verb|(1:gs%nb, 1:nk)| で確保されている（\file{gs\_info\_ssbe.f90:63}）ため、
+\verb|nb| が \verb|gs%ne/2| まで走っても添字は常に有効である。
+すなわち \ref{sec:norder} 節で指摘した
+\textbf{\file{nstate\_sbe} $<$ \file{nelec/2} のときの配列外参照が
+同時に解消される}（\verb|sbe%rho| は \verb|sbe%nb| までしか確保されていない）。
+
+%----------------------------------------------------------------------
+\subsection{修正 1・2：補正ブロック（\file{:109--111}）}
+
+\begin{lstlisting}[caption={修正前（\file{bloch\_solver\_ssbe.f90:109--111}）},firstnumber=109]
+                                tmp1(idir) = tmp1(idir) - gs%kweight(ik) * &
+                                    2.d0 * sbe%rho(nb, nb, ik) * &
+                                    dble(pni_Ac*pin(idir)) / gs%delta_omega(ib, nb, ik)
+\end{lstlisting}
+
+\begin{lstlisting}[caption={修正後。変更は演算子 1 文字と参照配列 1 つのみ。},firstnumber=109]
+                                ! Yakovlev & Wismer, CPC 217 (2017) 82, Eq.(20):
+                                ! sign is "+", and f_n must be the ground-state
+                                ! occupation, not the time-dependent population.
+                                tmp1(idir) = tmp1(idir) + gs%kweight(ik) * &
+                                    2.d0 * gs%occup(nb, ik) * &
+                                    dble(pni_Ac*pin(idir)) / gs%delta_omega(ib, nb, ik)
+\end{lstlisting}
+
+%----------------------------------------------------------------------
+\subsection{修正 3：電流の確定部（\file{:310--311}）}
+
+\begin{lstlisting}[caption={修正前（\file{bloch\_solver\_ssbe.f90:310--311}）},firstnumber=310]
+    jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:)) &
+        & + Ac * calc_trace(sbe, gs, sbe%nb, icomm)) / gs%volume
+\end{lstlisting}
+
+\begin{lstlisting}[caption={修正後。反磁性項は 1 次補正によって相殺される。},firstnumber=310]
+    if (norder_correction >= 1) then
+        ! The diamagnetic term N_e*Ac is exactly cancelled by the
+        ! N_VB*A term of the first-order adiabatic correction (Eq.(20)).
+        jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:))) / gs%volume
+    else
+        jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:)) &
+            & + Ac * calc_trace(sbe, gs, sbe%nb, icomm)) / gs%volume
+    end if
+\end{lstlisting}
+
+\verb|calc_trace| は内部で \verb|comm_summation| を呼ぶ集団通信であるが、
+\file{norder\_correction} は全ランク共通の入力変数なので
+分岐は全ランクで一致し、デッドロックは生じない。
+
+%----------------------------------------------------------------------
+\subsection{修正後に実現される式}
+
+上記 3 点により、\file{norder\_correction} $\ge 1$ のときの電流は
+%
+\begin{equation}
+  j^\alpha_{\text{fixed}}
+  = \frac{1}{\Omega}\Bigl[\,\Tr[\rho\,p^\alpha]
+    + \sum_\beta S_P^{\alpha\beta}A^\beta \,\Bigr]
+  \label{eq:jmat-fixed}
+\end{equation}
+%
+となる。これは論文 \cite{yakovlev2017} の
+$\mathbf{J}_N + \Delta\mathbf{J}^{(1)}$ を
+\ref{sec:vlad-sign} 節の符号規約で書き直したものに一致する。
+
+式 \eqref{eq:jmat-fixed} は次の 2 つの望ましい性質をもつ。
+
+\begin{itemize}
+\item $\vA = 0$ のとき $j = \Tr[\rho\,\vp]/\Omega$ となり、
+      \textbf{補正なしの場合と完全に一致する}。
+      補正は $O(A)$ なので $t=0$ では恒等的にゼロであり、
+      既存の回帰テストを壊さない。
+\item 断熱極限では式 \eqref{eq:trrho-adiabatic} より
+      $\Tr[\rho\,\vp]\to -S_P\vA$ であるから
+      $j\to 0$ となる。\textbf{しかもこれはバンド数
+      \file{nstate\_sbe} に依らず成立する}。
+      補正なしの場合の $(N_e\delta - S_P)\vA/\Omega$ が
+      \file{nstate\_sbe} に強く依存するのと対照的である。
+\end{itemize}
+
+%----------------------------------------------------------------------
+\subsection{検証手順}
+
+\begin{enumerate}
+\item \textbf{回帰確認（最優先）。}
+      \file{norder\_correction=0} の結果が修正前後で
+      \textbf{ビット単位で一致する}ことを確認する。
+      修正 3 の \verb|else| 分岐が元の式そのものなので、
+      一致しなければ修正のミスである。
+
+\item \textbf{$t=0$ での一致。}
+      \file{norder\_correction=1} でも初期ステップの電流は
+      補正なしと一致するはずである（補正は $O(A)$）。
+
+\item \textbf{弱電場・低振動数での消失。}
+      弱電場（線形応答領域）かつ低振動数の駆動に対し、
+      修正後の \file{norder\_correction=1} の電流が
+      \textbf{\file{nstate\_sbe} に依らず} $0$ に近づくことを確認する。
+      これが式 \eqref{eq:jmat-fixed} の最も鋭い予言である。
+
+\item \textbf{和則残差との突き合わせ。}
+      \ref{sec:vnl-verify} 節の \verb|sigma_intra| が与える
+      $(N_e\delta - S_P)$ と、\file{norder\_correction=0} で観測される
+      残留電流の比例係数が一致することを確認する。
+      一致すれば \ref{sec:codex-deriv} 節の解析全体が数値的に裏付けられる。
+\end{enumerate}
+
+%----------------------------------------------------------------------
+\subsection{本修正が扱わない範囲}
+
+\begin{table}[htbp]
+\centering
+\caption{\ref{sec:patch} 節の修正が対象としない事項}
+\label{tab:patch-scope}
+\begin{tabular}{@{}p{38mm}p{107mm}@{}}
+\toprule
+\textbf{項目} & \textbf{内容} \\
+\midrule
+\textbf{2 次・3 次補正} &
+\file{:120--170} および \file{:172--306} には手を触れない。
+\ref{sec:vlad} 節で述べたとおり、これらにも同種の全体符号の問題が
+あると推定されるが、添字が確定できていないため本レポートでは
+修正案を出さない。\textbf{当面は \file{norder\_correction} を
+$0$ または $1$ に限って使用することを推奨する。}
+必要なら \file{input\_checker\_sbe.f90} に
+\file{norder\_correction > 1} を弾く検査を追加するのが安全である。 \\[2mm]
+
+\textbf{非局所擬ポテンシャル} &
+修正後も補正項は \file{p\_tm\_matrix} のみを使う。
+\file{yn\_vnl\_correction='y'} のとき主要項が $\vp+\mathrm{rvnl}$ を
+使うこととの不整合は残る。$\vp\to\vv$ の置換は自然な拡張だが、
+論文は局所ハミルトニアンを前提としており
+（表 \ref{tab:vlad-outofscope}）、\textbf{和則がそのまま成り立つ保証はない}。
+先に \ref{sec:vnl-verify} 節の検証を行うべきである。 \\[2mm]
+
+\textbf{エネルギー分母の\newline カットオフ} &
+$|\Delta\eps| > 10^{-3}$~a.u.\ のハードカットはそのまま残る。
+準縮退バンドがある系では \ref{sec:norder} 節の警告が引き続き該当する。 \\[2mm]
+
+\textbf{計算コスト} &
+補正は依然として毎時間ステップ計算される。
+\verb|gs%occup| は時間に依らないので、論文 Eq.~(24) のように
+$3\times3$ テンソルを一度だけ構成すれば大幅に高速化できる
+（Codex パッチの方針）。ただし本節は\emph{最小の変更}を
+優先しており、この最適化は含めない。 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%======================================================================
+\begin{thebibliography}{9}
+\bibitem{yakovlev2017}
+V.~S.~Yakovlev and M.~S.~Wismer,
+``Adiabatic corrections for velocity-gauge simulations of electron dynamics
+in periodic potentials'',
+\emph{Computer Physics Communications} \textbf{217} (2017) 82--88.
+\href{https://doi.org/10.1016/j.cpc.2017.04.010}{doi:10.1016/j.cpc.2017.04.010}.
+（本リポジトリ内 \file{src/ssbe/vlad.pdf}）
+\end{thebibliography}
+
+%======================================================================
+\section*{参照したソースファイル}
+\addcontentsline{toc}{section}{参照したソースファイル}
+
+\begin{itemize}
+\item \file{src/ssbe/bloch\_solver\_ssbe.f90}（主たる解析対象）
+\item \file{src/ssbe/gs\_info\_ssbe.f90}（行列要素の読み込みと前処理）
+\item \file{src/ssbe/realtime\_ssbe.f90}（時間発展ループの呼び出し側）
+\item \file{src/ssbe/multiscale\_ssbe.f90}（マルチスケール計算での呼び出し側）
+\item \file{src/ssbe/input\_checker\_sbe.f90}（入力検査）
+\item \file{src/io/write.f90}（\file{\_tm.data} の生成、\verb|write_tm_data|）
+\item \file{src/common/stencil.f90}（\verb|calc_gradient_psi|、$\vk$ を含まないことの確認）
+\item \file{src/common/hamiltonian.f90}
+      （\verb|update_kvector_nonlocalpt|、本体 RT-TDDFT が $\vk+\vA$ を厳密に扱う証拠）
+\item \file{utility/linear\_response\_from\_transition\_moments/tm2sigma.f90}
+      （\file{\_tm.data} の独立な後処理実装、\verb|sigma_intra| による和則検証）
+\item \file{src/io/salmon\_global.f90}, \file{src/io/inputoutput.f90}
+      （\file{norder\_correction}, \file{yn\_vnl\_correction} の定義と既定値）
+\item \file{comment.tex}（検証対象。Codex による \file{norder\_correction}
+      診断・修正パッチ・ベンチマーク結果の記録。本リポジトリには
+      未追跡のまま置かれている外部文書）
+\item \file{vlad.pdf}（\file{norder\_correction} の理論的根拠。
+      Yakovlev \& Wismer, Comput. Phys. Commun. \textbf{217} (2017) 82--88。
+      \ref{sec:vlad} 節で実装と照合）
+\end{itemize}
+
+\end{document}
