@@ -109,7 +109,7 @@ subroutine calc_current_bloch(sbe, gs, Ac, jmat, icomm)
                                  gs%p_tm_matrix(nb, ib, 2, ik) * Ac(2) + &
                                  gs%p_tm_matrix(nb, ib, 3, ik) * Ac(3)
                         if(nb /= ib) then
-                            if(abs(gs%delta_omega(ib, nb, ik))> 1.d-3)then
+                            if(abs(gs%delta_omega(ib, nb, ik))> 1.d-9)then
                                 ! Yakovlev & Wismer, Comput. Phys. Commun. 217 (2017) 82, Eq.(20):
                                 ! the sign is "+", and the occupation factor must be the
                                 ! ground-state one f_n (the sum rule is derived for the
