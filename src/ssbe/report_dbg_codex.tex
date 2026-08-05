@@ -1,0 +1,286 @@
+%%
+%% report_dbg_codex.tex --- dbg_codex ブランチにおける
+%%   第一次断熱電流補正 (norder_correction>=1) の再実装まとめ
+%% コンパイル: platex report_dbg_codex.tex && dvipdfmx report_dbg_codex.dvi
+%%
+\documentclass[dvipdfmx,a4paper,11pt]{jsarticle}
+
+\usepackage[dvipdfmx]{graphicx}
+\usepackage[dvipdfmx]{xcolor}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage[margin=25mm]{geometry}
+\usepackage[dvipdfmx]{hyperref}
+\usepackage{pxjahyper}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=[rgb]{0.0,0.25,0.55},
+  urlcolor=[rgb]{0.0,0.35,0.45},
+  citecolor=[rgb]{0.0,0.25,0.55},
+}
+
+\definecolor{lstbg}{rgb}{0.97,0.97,0.94}
+\definecolor{lstkw}{rgb}{0.10,0.25,0.65}
+\definecolor{lstcm}{rgb}{0.15,0.45,0.20}
+\definecolor{lstst}{rgb}{0.60,0.20,0.15}
+
+\lstset{
+  language=[90]Fortran,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{lstkw}\bfseries,
+  commentstyle=\color{lstcm}\itshape,
+  stringstyle=\color{lstst},
+  backgroundcolor=\color{lstbg},
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color[rgb]{0.75,0.75,0.72},
+  numbers=left,
+  numberstyle=\tiny\color[rgb]{0.5,0.5,0.5},
+  numbersep=8pt,
+  breaklines=true,
+  breakatwhitespace=false,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  captionpos=b,
+  aboveskip=1.2\baselineskip,
+  belowskip=0.8\baselineskip,
+}
+
+%% 便利マクロ
+\newcommand{\file}[1]{\texttt{#1}}
+\newcommand{\vk}{\bm{k}}
+\newcommand{\vA}{\bm{A}}
+\newcommand{\vp}{\bm{p}}
+\newcommand{\vv}{\bm{v}}
+\newcommand{\vr}{\bm{r}}
+\newcommand{\Tr}{\mathrm{Tr}}
+\newcommand{\Real}{\mathrm{Re}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\dt}{\Delta t}
+
+\title{\texttt{dbg\_codex} ブランチ：\\
+  第一次断熱電流補正の再実装まとめ}
+\author{Claude (Opus 5) / Codex 連携作業}
+\date{2026年8月5日}
+
+\begin{document}
+\maketitle
+
+\section{背景と目的}
+\file{bloch\_solver\_ssbe.f90} の \texttt{norder\_correction>=1} ブロックには，
+有限バンド基底で光学和則 (Thomas--Reiche--Kuhn sum rule) が厳密に満たされない
+ことに起因する残留電流を補正するという意図がある．
+これまでの \texttt{dbg\_test} ブランチでの作業で，このブロックには
+\begin{itemize}[nosep]
+  \item 符号の反転，
+  \item 反磁性項 $N_e\vA/\Omega$ を打ち消す項の欠落，
+  \item 占有数として基底状態の $f_n$ ではなく時間発展する $\rho_{nn}(t)$ を使っている，
+\end{itemize}
+という欠陥があることを確認済みであった．
+
+Codex（別のAIエージェント）が同じ問題を独立に分析し，\file{comment.tex} として
+具体的な修正パッチ（テンソルの事前計算方式）を提示した．本ドキュメントは，
+\texttt{develop-2.0.0} から新たに分岐した \texttt{dbg\_codex} ブランチ上で
+\emph{Codex の報告内容にできる限り忠実に従って} 実装した変更のまとめである．
+\texttt{dbg\_test} ブランチの独自修正（コミット \texttt{2aad7e91}）とは別系統の
+実装であり，両者の対応関係も本文中で述べる．
+
+\section{Codex 提案の要点}
+Codex の分析（\file{comment.tex}）は，元の実装の問題を次の4点に整理していた．
+\begin{enumerate}[nosep]
+  \item 補正項が \texttt{p\_tm\_matrix} のみを使い，\texttt{rvnl\_tm\_matrix} を
+    含めていない．一方，直上の通常電流計算は \texttt{yn\_vnl\_correction='y'} の
+    ときに \texttt{rvnl\_tm\_matrix} を加えるため，演算子が不整合になる．
+  \item 係数に時間発展する \texttt{sbe\%rho(nb,nb,ik)} を使っており，
+    有限基底補正であるべき量が占有数のダイナミクスと混ざってしまう．
+  \item 補正項がすでに伝播済みの電流 (\texttt{tmp1}) に単純加算されており，
+    有限基底残差 $C^{(1)}\vA$ を明示的に構成して差し引く形になっていない．
+    その結果，元の \texttt{norder\_correction=1} は和則からのずれをむしろ
+    拡大する．
+  \item バンド・K点の全和を毎時間ステップ実行しており，本来は初期基底状態
+    のみで決まる係数を無駄に再計算している．
+\end{enumerate}
+提案された解決策は，初期占有数 $f_n$ と速度演算子から一度だけ
+補正テンソル $C^{(1)}_{ab}$ を構成し，実時間ループでは
+\[
+  \vJ \;\longrightarrow\; \vJ - C^{(1)}\vA
+\]
+として差し引く方式である．
+
+\section{実装内容}
+\subsection{型メンバの追加（\file{bloch\_solver\_ssbe.f90}）}
+\texttt{s\_sbe\_bloch\_solver} 型に補正テンソルを追加し，
+\texttt{init\_sbe\_bloch\_solver} でゼロ初期化する．
+\begin{lstlisting}[caption={型メンバの追加}]
+type s_sbe_bloch_solver
+    ...
+    logical :: flag_vnl_correction
+    ! First-order adiabatic current correction tensor.
+    real(8) :: corr1_tensor(1:3, 1:3)
+end type
+...
+sbe%flag_vnl_correction = .false.
+sbe%corr1_tensor(:, :) = 0d0
+\end{lstlisting}
+
+\subsection{新規ルーチン \texttt{prepare\_first\_order\_correction}}
+初期占有数 \texttt{gs\%occup} と速度行列（\texttt{flag\_vnl\_correction} が
+真なら \texttt{rvnl\_tm\_matrix} も加算）から，一度だけ次のテンソルを構成する．
+\[
+  C^{(1)}_{ab} \;=\; \frac{1}{\Omega}\left[
+    N_e\,\delta_{ab} \;-\; S_{ab}
+  \right],\qquad
+  S_{ab} \;=\; \frac{1}{\sum_\vk w_\vk}\sum_\vk w_\vk
+    \sum_{n\in\mathrm{occ}}\sum_{i\neq n}
+    \frac{2 f_n\,\Real\!\left[v^b_{ni}v^a_{in}\right]}{\eps_i-\eps_n}.
+\]
+$S_{ab}$ は打ち切られた Thomas--Reiche--Kuhn 和であり，完全基底の極限で
+$N_e\delta_{ab}$ に収束するため，$C^{(1)}_{ab}$ は完全基底極限でゼロに
+収束する．エネルギー分母のカットオフ $|\eps_i-\eps_n|>10^{-3}$ a.u.\ は
+元コードの値を踏襲した．
+\begin{lstlisting}[caption={\texttt{prepare\_first\_order\_correction} の中核部分}]
+corr_local(:, :) = 0d0
+trace_local = 0d0
+do ik = sbe%ik_min, sbe%ik_max
+    do nb = 1, min(gs%ne/2, sbe%nb)
+        fn = gs%occup(nb, ik)
+        trace_local = trace_local + gs%kweight(ik) * fn
+        do ib = 1, sbe%nb
+            if (ib == nb) cycle
+            de = gs%delta_omega(ib, nb, ik)
+            if (abs(de) <= 1.d-3) cycle
+            vni(:) = gs%p_tm_matrix(nb, ib, :, ik)
+            vin(:) = gs%p_tm_matrix(ib, nb, :, ik)
+            if (sbe%flag_vnl_correction) then
+                vni(:) = vni(:) + gs%rvnl_tm_matrix(nb, ib, :, ik)
+                vin(:) = vin(:) + gs%rvnl_tm_matrix(ib, nb, :, ik)
+            end if
+            do idir = 1, 3
+                do jdir = 1, 3
+                    corr_local(idir, jdir) = corr_local(idir, jdir) &
+                        & - 2d0 * gs%kweight(ik) * fn &
+                        & * dble(vni(jdir) * vin(idir)) / de
+                end do
+            end do
+        end do
+    end do
+end do
+
+call comm_summation(corr_local, corr_global, 9, icomm)
+call comm_summation(trace_local, trace_global, icomm)
+
+wsum = sum(gs%kweight(:))
+corr_global(:, :) = corr_global(:, :) / wsum
+trace_global = trace_global / wsum
+do idir = 1, 3
+    corr_global(idir, idir) = corr_global(idir, idir) + trace_global
+end do
+sbe%corr1_tensor(:, :) = corr_global(:, :) / gs%volume
+\end{lstlisting}
+\texttt{min(gs\%ne/2, sbe\%nb)} としたのは，元の \texttt{nb = 1, gs\%ne/2} ループが
+\texttt{nstate\_sbe < nelec/2} の場合に \texttt{sbe\%rho} の範囲外を参照し
+うる問題を副次的に修正するためである．
+
+\subsection{実時間ループの置き換え}
+\texttt{calc\_current\_bloch} 内の毎時間ステップ実行されていた
+\texttt{norder\_correction>=1} ブロックを削除し，MPI 集約後に
+補正テンソルを一度だけ適用する形にした．
+\begin{lstlisting}[caption={電流最終化部分の変更後}]
+jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:)) &
+    & + Ac * calc_trace(sbe, gs, sbe%nb, icomm)) / gs%volume
+
+if (norder_correction >= 1) then
+    ! corr1_tensor is the residual linear current left by the
+    ! truncated band basis. Subtract it to restore the sum rule.
+    jmat(:) = jmat(:) - matmul(sbe%corr1_tensor(:, :), Ac(:))
+end if
+\end{lstlisting}
+これにより通常電流の反磁性項 $N_e\vA/\Omega$ と補正テンソルの対角成分
+$N_e\delta_{ab}/\Omega$ が相殺し，実効的に
+\[
+  \vJ = \frac{1}{\Omega}\left[\Tr(\rho\vv) + S\vA\right]
+\]
+となって，断熱極限で誘電体電流がゼロへ収束する．
+
+\subsection{呼び出し側の変更}
+\texttt{flag\_vnl\_correction} を設定した直後に
+\texttt{prepare\_first\_order\_correction} を呼ぶよう
+\file{realtime\_ssbe.f90} と \file{multiscale\_ssbe.f90} を修正した．
+単一スケール版ではランク0でテンソルを標準出力に書き出し，動作確認の
+監査証跡とした．
+\begin{lstlisting}[caption={\file{realtime\_ssbe.f90} の初期化部分}]
+call init_sbe_bloch_solver(sbe, gs, nstate_sbe(1), icomm)
+sbe%flag_vnl_correction = (yn_vnl_correction == 'y')
+if (norder_correction >= 1) then
+    call prepare_first_order_correction(sbe, gs, icomm)
+    if (irank == 0) then
+        write(*,'(a)') '# experimental first-order adiabatic correction tensor'
+        do i = 1, 3
+            write(*,'(3es24.15)') sbe%corr1_tensor(i, 1:3)
+        end do
+    end if
+end if
+\end{lstlisting}
+\file{multiscale\_ssbe.f90} 側も同様に各マクロポイントの初期化直後に
+呼び出しを追加した．同一材料種のマクロポイントに対して同じテンソルが
+毎回再計算される点は非効率だが，物理的には正しい．
+
+\section{\texttt{dbg\_test} ブランチの独自修正との関係}
+\texttt{dbg\_test} ブランチでは，理論論文（Yakovlev \& Wismer, CPC 217
+(2017) 82, Eq.\,(20)）から独立に同じ結論を導出し，占有数の基底状態固定と
+反磁性項の分岐処理という最小限の修正を既存ループに直接施していた．
+両ブランチは実装方法が異なる（\texttt{dbg\_test} は既存ループを条件分岐で
+修正，\texttt{dbg\_codex} は補正テンソルの事前計算に置き換え）が，
+到達する最終電流式
+\[
+  \vJ = \frac{1}{\Omega}\left[\Tr(\rho\vv) + S\vA\right]
+\]
+は代数的に一致する．理論導出と Codex の経験的パッチという独立な2経路が
+同じ符号・同じ表式に収束したことは，この結果の信頼性を補強する材料と
+なる．
+
+\texttt{dbg\_codex} 版が \texttt{dbg\_test} 版に優る点は以下の3点である．
+\begin{itemize}[nosep]
+  \item \texttt{flag\_vnl\_correction='y'} のとき，補正テンソルにも
+    \texttt{rvnl\_tm\_matrix} を含めており，通常電流と演算子が整合している．
+  \item 補正係数を初期化時に一度だけ計算し，毎時間ステップの再計算を
+    行わない．
+  \item \texttt{min(gs\%ne/2, sbe\%nb)} により，\texttt{nstate\_sbe} が
+    \texttt{nelec/2} より小さい場合の配列範囲外アクセスの可能性を防いでいる．
+\end{itemize}
+
+\section{未解決事項・注意点}
+\begin{itemize}[nosep]
+  \item \texttt{norder\_correction>=2} および \texttt{>=3} のブロックは
+    今回未修正のまま残っている．これらは旧規約（1次項が「加算」）を前提に
+    書かれているため，1次項の符号が反転した現在，\texttt{norder\_correction=2}
+    以上を指定すると新しい1次項と旧来のままの2次・3次項が混在する．
+    当面 \texttt{norder\_correction} は \texttt{0} または \texttt{1} に限定
+    すべきである．
+  \item 本ブランチの変更はフルビルドを実施していない．\file{bloch\_solver\_ssbe.f90}
+    単体と，\file{realtime\_ssbe.f90} に挿入した文をそのまま抜き出した
+    ハーネスは，実際の \texttt{salmon\_global}／\texttt{gs\_info\_ssbe}／
+    \texttt{communication} モジュールに対して \texttt{gfortran} でコンパイル
+    確認済みであるが，\file{realtime\_ssbe.f90}／\file{multiscale\_ssbe.f90}
+    本体は依存モジュール（\texttt{em\_field} 等）が重く未コンパイルである．
+  \item \file{comment.tex} に記載されているベンチマーク数値（B32/B64/B128
+    の比較，K点収束等）は別ブランチ・別実行環境のものであり，本リポジトリ内
+    では検証できていない．
+\end{itemize}
+
+\section{変更したファイル}
+\begin{itemize}[nosep]
+  \item \file{src/ssbe/bloch\_solver\_ssbe.f90} --- 型メンバ追加，
+    \texttt{prepare\_first\_order\_correction} 新設，実時間ループ置き換え。
+  \item \file{src/ssbe/realtime\_ssbe.f90} --- 初期化呼び出し追加。
+  \item \file{src/ssbe/multiscale\_ssbe.f90} --- 初期化呼び出し追加。
+\end{itemize}
+コミット: \texttt{ad8b6a49}（ブランチ \texttt{dbg\_codex}，
+\texttt{develop-2.0.0} から分岐）。
+
+\end{document}
