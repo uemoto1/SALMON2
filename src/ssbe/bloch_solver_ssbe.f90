@@ -52,7 +52,11 @@ subroutine init_sbe_bloch_solver(sbe, gs, nb_sbe, icomm)
         end do
     end do
 
-    sbe%flag_vnl_correction = .false.
+    ! NOTE: commented out. Both callers (realtime_ssbe.f90, multiscale_ssbe.f90)
+    ! set this flag from yn_vnl_correction immediately after this routine
+    ! returns, so this hard-coded .false. only obscured the intent.
+    ! Any new caller MUST set flag_vnl_correction explicitly.
+    ! sbe%flag_vnl_correction = .false.
 end subroutine
 
 
@@ -104,11 +108,31 @@ subroutine calc_current_bloch(sbe, gs, Ac, jmat, icomm)
                         pni_Ac = gs%p_tm_matrix(nb, ib, 1, ik) * Ac(1) + &
                                  gs%p_tm_matrix(nb, ib, 2, ik) * Ac(2) + &
                                  gs%p_tm_matrix(nb, ib, 3, ik) * Ac(3)
+                        if (sbe%flag_vnl_correction) then
+                            ! The propagation (dt_evolve_bloch) and the ordinary
+                            ! current above are both built from the full velocity
+                            ! v = p + rvnl, so the adiabatic sum-rule term has to use
+                            ! the same operator.  Building it from p alone leaves a
+                            ! residual (S_p - S_v)*Ac in the current, because the
+                            ! cancellation against Tr[rho^(1) v] is an identity in the
+                            ! operator, not a consequence of the sum rule.
+                            pin(idir) = pin(idir) &
+                                + gs%rvnl_tm_matrix(ib, nb, idir, ik)
+                            pni_Ac = pni_Ac &
+                                + gs%rvnl_tm_matrix(nb, ib, 1, ik) * Ac(1) &
+                                + gs%rvnl_tm_matrix(nb, ib, 2, ik) * Ac(2) &
+                                + gs%rvnl_tm_matrix(nb, ib, 3, ik) * Ac(3)
+                        end if
                         if(nb /= ib) then
                             if(abs(gs%delta_omega(ib, nb, ik))> 1.d-3)then
-                                tmp1(idir) = tmp1(idir) - gs%kweight(ik) * &
-                                    2.d0 * sbe%rho(nb, nb, ik) * &
-                                    dble(pni_Ac*pin(idir)) / gs%delta_omega(ib, nb, ik) 
+                                ! Yakovlev & Wismer, Comput. Phys. Commun. 217 (2017) 82, Eq.(20):
+                                ! the sign is "+", and the occupation factor must be the
+                                ! ground-state one f_n (the sum rule is derived for the
+                                ! unperturbed stationary state), not the time-dependent
+                                ! population rho_nn(t).
+                                tmp1(idir) = tmp1(idir) + gs%kweight(ik) * &
+                                    2.d0 * gs%occup(nb, ik) * &
+                                    dble(pni_Ac*pin(idir)) / gs%delta_omega(ib, nb, ik)
                             end if
                         end if
                     end do
@@ -307,8 +331,15 @@ subroutine calc_current_bloch(sbe, gs, Ac, jmat, icomm)
 
     call comm_summation(tmp1, tmp, 3, icomm)
 
-    jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:)) &
-        & + Ac * calc_trace(sbe, gs, sbe%nb, icomm)) / gs%volume
+    if (norder_correction >= 1) then
+        ! The diamagnetic term N_e*Ac is exactly cancelled by the N_VB*A term of
+        ! the first-order adiabatic correction (Eq.(20) of the reference above),
+        ! which is accumulated into tmp1 by the norder_correction>=1 block.
+        jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:))) / gs%volume
+    else
+        jmat(:) = (real(tmp(1:3)) / sum(gs%kweight(:)) &
+            & + Ac * calc_trace(sbe, gs, sbe%nb, icomm)) / gs%volume
+    end if
 
     return
 end subroutine calc_current_bloch
