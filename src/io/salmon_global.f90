@@ -211,6 +211,8 @@ module salmon_global
   character(16)  :: fdtddim
   character(16)  :: twod_shape
   integer        :: nx_m
+  integer        :: nx_m_dielec_sub
+  real(8)        :: epsilon_dielec_sub
   integer        :: ny_m
   integer        :: nz_m
   real(8)        :: hx_m
