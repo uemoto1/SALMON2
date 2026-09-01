@@ -276,6 +276,10 @@ subroutine initialization_ms()
                        fs%mg%is_array(3):fs%mg%ie_array(3)))
     fs%imedia(:,:,:) = 0
 
+    if (nx_m_dielec_sub > 0) then
+        fw%epsilon%f(nx_m + 1:nx_m + nx_m_dielec_sub, :, :) = epsilon_dielec_sub
+    end if
+
     allocate(ms%curr(1:3, 1:ms%nmacro))
     allocate(ms%vec_Ac(1:3, 1:ms%nmacro))
     allocate(ms%vec_Ac_old(1:3, 1:ms%nmacro))
@@ -735,10 +739,12 @@ subroutine write_wave_data_file()
     real(8) :: e_tra(3)
     real(8) :: dt_Ac(3)
     real(8) :: dx_Ac(3)
-    integer :: iiy, iiz
+    integer :: iiy, iiz, ix_tra
 
     iiy = fs%mg%is(2)
     iiz = fs%mg%is(3)
+    ix_tra = nx_m
+    if (nx_m_dielec_sub > 0) ix_tra = nx_m + nx_m_dielec_sub
 
     ! Left side boundary:
     dx_Ac(:) = (fw%vec_Ac%v(:,0,iiy,iiz) - fw%vec_Ac%v(:,-1,iiy,iiz)) / fs%hgs(1)
@@ -749,9 +755,9 @@ subroutine write_wave_data_file()
     e_ref(:) = -0.5d0 * (dt_Ac + cspeed_au * dx_Ac)
 
     ! Right side boundary:
-    dx_Ac(:) = (fw%vec_Ac%v(:,nx_m+2,iiy,iiz) - fw%vec_Ac%v(:,nx_m+1,iiy,iiz)) / fs%hgs(1)
-    dt_Ac(:) = (0.5d0 * (fw%vec_Ac_new%v(:,nx_m+2,iiy,iiz) + fw%vec_Ac_new%v(:,nx_m+1,iiy,iiz)) & 
-        & - 0.5d0 * (fw%vec_Ac_old%v(:,nx_m+2,iiy,iiz) + fw%vec_Ac_old%v(:,nx_m+1,iiy,iiz))) / (2 * dt)
+    dx_Ac(:) = (fw%vec_Ac%v(:,ix_tra+2,iiy,iiz) - fw%vec_Ac%v(:,ix_tra+1,iiy,iiz)) / fs%hgs(1)
+    dt_Ac(:) = (0.5d0 * (fw%vec_Ac_new%v(:,ix_tra+2,iiy,iiz) + fw%vec_Ac_new%v(:,ix_tra+1,iiy,iiz)) &
+        & - 0.5d0 * (fw%vec_Ac_old%v(:,ix_tra+2,iiy,iiz) + fw%vec_Ac_old%v(:,ix_tra+1,iiy,iiz))) / (2 * dt)
     
     e_tra(:) = -0.5d0 * (dt_Ac - cspeed_au * dx_Ac)
 
@@ -781,4 +787,3 @@ end subroutine close_wave_data_file
 
 
 end subroutine main_ms
-
