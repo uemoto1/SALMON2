@@ -27,8 +27,11 @@ contains
 function check_input_variables_ms() result(flag)
     implicit none
     logical :: flag
+    integer :: nxvac_m_right
 
     flag = .true.
+    nxvac_m_right = nxvac_m(2)
+    if (abs(nxvacr_m) > 0) nxvac_m_right = abs(nxvacr_m)
     
     if (nx_m < 1) &
         call raise("ERROR! 'nx_m' must be larger than 1!")
@@ -65,6 +68,9 @@ function check_input_variables_ms() result(flag)
         
     if (abs(nxvacr_m) < 2) &
         call raise("ERROR! 'nxvacr_m' must not larger than 2!")
+
+    if (nx_m_dielec_sub > 0 .and. nxvac_m_right < nx_m_dielec_sub + 1) &
+        call raise("ERROR! right vacuum width must be at least 'nx_m_dielec_sub + 1'!")
         
     if (trim(boundary_em(1,1)) .ne. 'periodic' &
         & .and. trim(boundary_em(1,1)) .ne. 'pec' &
@@ -111,5 +117,3 @@ function check_input_variables_ms() result(flag)
 
 end function check_input_variables_ms
 end module input_checker_ms
-
-
