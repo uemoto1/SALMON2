@@ -66,14 +66,18 @@ subroutine input_pp(pp,hx,hy,hz)
       select case (ps_format(ik))
       case('KY')
         call read_ps_ky(pp,rrc,ik,ps_file)
+        pp%has_wf_pseudo(ik)=.true.
       case('ABINIT')
         call read_ps_abinit(pp,rrc,ik,ps_file)
+        pp%has_wf_pseudo(ik)=.true.
       case('ABINITFHI')
         call read_ps_abinitfhi(pp,rrc,rhor_nlcc,flag_nlcc_element,ik,ps_file)
+        pp%has_wf_pseudo(ik)=.true.
       case('ABINITPSP8')
         call read_ps_abinitpsp8(pp,rrc,rhor_nlcc,flag_nlcc_element,ik,ps_file)
       case('FHI')
         call read_ps_fhi(pp,rrc,ik,ps_file)
+        pp%has_wf_pseudo(ik)=.true.
       case('ADPACK')
         call read_ps_adpack(pp,rrc,rhor_nlcc,flag_nlcc_element,ik,ps_file)
       case('UPF')
@@ -267,6 +271,10 @@ subroutine input_pp(pp,hx,hy,hz)
   call comm_bcast(pp%upp_f,nproc_group_global)
   call comm_bcast(pp%vpp_f,nproc_group_global)
   call comm_bcast(pp%rho_pp_tbl,nproc_group_global)
+  do ik=1,nelem
+    call comm_bcast(pp%has_rho_pseudo(ik),nproc_group_global)
+    call comm_bcast(pp%has_wf_pseudo(ik),nproc_group_global)
+  end do
   call comm_bcast(pp%rho_nlcc_tbl,nproc_group_global)
   call comm_bcast(pp%tau_nlcc_tbl,nproc_group_global)
   call comm_bcast(pp%flag_nlcc,nproc_group_global)
@@ -1138,6 +1146,7 @@ subroutine making_ps_without_masking(pp,ik,flag_nlcc_element,rhor_nlcc)
       u = u + pp%rho_pp_tbl(i,ik)*(pp%rad(i+1,ik)-pp%rad(i,ik))
     end do
     write(*,*) "Int(rho)= ",u, " (for method_init_density=pp...)"
+    if (u > 0d0) pp%has_rho_pseudo(ik) = .true.
   end if
 
 ! multiply sqrt((2l+1)/4pi)/r**(l+1) for radial w.f.

@@ -231,6 +231,8 @@ module structures
     integer :: lmax,lmax0
     integer :: nrmax,nrmax0
     logical :: flag_nlcc
+    logical,allocatable :: has_rho_pseudo(:) ! rho_pp_tbl is populated for this element
+    logical,allocatable :: has_wf_pseudo(:)  ! upp contains input pseudo wavefunctions
     character(2),allocatable :: atom_symbol(:)
     real(8),allocatable :: rmass(:)
     integer,allocatable :: mr(:)

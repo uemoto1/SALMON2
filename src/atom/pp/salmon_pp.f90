@@ -71,6 +71,8 @@ module salmon_pp
     allocate(pp%rmass(nelem))
     allocate(pp%mr(nelem)); pp%mr=0
     allocate(pp%num_orb(nelem)); pp%num_orb=0
+    allocate(pp%has_rho_pseudo(nelem)); pp%has_rho_pseudo=.false.
+    allocate(pp%has_wf_pseudo(nelem)); pp%has_wf_pseudo=.false.
 
     if (comm_is_root(nproc_id_global)) then
   
