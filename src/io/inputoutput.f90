@@ -373,6 +373,7 @@ contains
     namelist/multiscale/ &
       & fdtddim, &
       & twod_shape, &
+      & nlayer, &
       & nx_m, &
       & nx_m_dielec_sub, &
       & epsilon_dielec_sub, &
@@ -816,6 +817,7 @@ contains
 !! == default for &multiscale
     fdtddim    = '1d'
     twod_shape = 'periodic'
+    nlayer     = 2
     nx_m       = 1
     nx_m_dielec_sub = 0
     epsilon_dielec_sub = 1.0d0
@@ -1429,6 +1431,7 @@ contains
 !! == bcast for &multiscale
     call comm_bcast(fdtddim   ,nproc_group_global)
     call comm_bcast(twod_shape,nproc_group_global)
+    call comm_bcast(nlayer    ,nproc_group_global)
     call comm_bcast(nx_m      ,nproc_group_global)
     call comm_bcast(nx_m_dielec_sub,nproc_group_global)
     call comm_bcast(epsilon_dielec_sub,nproc_group_global)
@@ -2343,6 +2346,7 @@ contains
       write(fh_variables_log, '("#namelist: ",A,", status=",I3)') 'multiscale', inml_multiscale
       write(fh_variables_log, '("#",4X,A,"=",A)') 'fdtddim', fdtddim
       write(fh_variables_log, '("#",4X,A,"=",A)') 'twod_shape', twod_shape
+      write(fh_variables_log, '("#",4X,A,"=",I4)') 'nlayer', nlayer
       write(fh_variables_log, '("#",4X,A,"=",I4)') 'nx_m', nx_m
       write(fh_variables_log, '("#",4X,A,"=",I4)') 'nx_m_dielec_sub', nx_m_dielec_sub
       write(fh_variables_log, '("#",4X,A,"=",ES12.5)') 'epsilon_dielec_sub', epsilon_dielec_sub

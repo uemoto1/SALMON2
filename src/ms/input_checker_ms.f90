@@ -32,6 +32,12 @@ function check_input_variables_ms() result(flag)
     flag = .true.
     nxvac_m_right = nxvac_m(2)
     if (abs(nxvacr_m) > 0) nxvac_m_right = abs(nxvacr_m)
+
+    if (nlayer < 1) &
+        call raise("ERROR! 'nlayer' must be at least 1!")
+
+    if (nx_m_dielec_sub < 0) &
+        call raise("ERROR! 'nx_m_dielec_sub' must not be negative!")
     
     if (nx_m < 1) &
         call raise("ERROR! 'nx_m' must be larger than 1!")
@@ -42,11 +48,13 @@ function check_input_variables_ms() result(flag)
     if (nz_m /= 1) &
         call raise("ERROR! 'nz_m' must be 1!")
         
-    if (nproc_size_global < nx_m * ny_m * nz_m) &
-        call raise("ERROR! MPI procs is too small!")
-        
-    if (mod(nproc_size_global, nx_m * ny_m * nz_m) > 0) &
-        call raise("ERROR! MPI procs must be an integer multiple of macropoints!")
+    if (nlayer >= 1 .and. nx_m >= 1 .and. ny_m >= 1 .and. nz_m >= 1) then
+        if (nproc_size_global < nx_m * ny_m * nz_m * ((nlayer + 1) / 2)) &
+            call raise("ERROR! MPI procs is too small!")
+
+        if (mod(nproc_size_global, nx_m * ny_m * nz_m * ((nlayer + 1) / 2)) > 0) &
+            call raise("ERROR! MPI procs must be an integer multiple of macropoints!")
+    end if
         
     if (hx_m < 1d-6 .and. dl_em(1) < 1d-6) &
         call raise("ERROR! 'hx_m' or 'dl_em(1)' must be specified!")
@@ -69,8 +77,8 @@ function check_input_variables_ms() result(flag)
     if (abs(nxvacr_m) < 2) &
         call raise("ERROR! 'nxvacr_m' must not larger than 2!")
 
-    if (nx_m_dielec_sub > 0 .and. nxvac_m_right < nx_m_dielec_sub + 1) &
-        call raise("ERROR! right vacuum width must be at least 'nx_m_dielec_sub + 1'!")
+    if (nxvac_m_right < 2) &
+        call raise("ERROR! right vacuum width must be at least 2!")
         
     if (trim(boundary_em(1,1)) .ne. 'periodic' &
         & .and. trim(boundary_em(1,1)) .ne. 'pec' &

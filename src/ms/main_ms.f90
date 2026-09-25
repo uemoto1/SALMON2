@@ -74,6 +74,7 @@ type(s_unfold) :: unfold
 
 integer :: Mit, itt
 integer :: nntime
+integer :: nmaterial_layers, ndielectric_layers, nx_stack
 
 integer :: i, ix, iy, iz
 
@@ -95,6 +96,10 @@ integer :: fh_wave
 ! write(9999, *) 'logging start'; flush(9999)
 
 if (.not. check_input_variables_ms()) return
+
+nmaterial_layers = (nlayer + 1) / 2
+ndielectric_layers = nlayer / 2
+nx_stack = nx_m * nmaterial_layers + nx_m_dielec_sub * ndielectric_layers
 
 call timer_begin(LOG_TOTAL)
 ! Initialization
@@ -196,11 +201,11 @@ end function restart_directory_macro
 
 subroutine initialization_ms()
     implicit none
-    integer :: ii, jj
+    integer :: ii, jj, ilayer, ix_stack
     integer :: iimacro_s, iimacro_e, iimacro
 
     ! Store global information
-    ms%nmacro = nx_m * ny_m * nz_m
+    ms%nmacro = nx_m * ny_m * nz_m * nmaterial_layers
     ms%base_directory = trim(base_directory)
     ms%base_directory_RT_Ac = trim(ms%base_directory) // trim(sysname) // "_RT_Ac/"
     ms%icomm_ms_world = nproc_group_global
@@ -246,7 +251,7 @@ subroutine initialization_ms()
     fw%dt = dt
     fw%fdtddim = '1d'
     fs%mg%is(1) = 1 - nxvac_m(1)
-    fs%mg%ie(1) = nx_m + nxvac_m(2)
+    fs%mg%ie(1) = nx_stack + nxvac_m(2)
     fs%mg%is(2) = 1 - nyvac_m(1)
     fs%mg%ie(2) = ny_m + nyvac_m(2)
     fs%mg%is(3) = 1 - nzvac_m(1)
@@ -277,7 +282,10 @@ subroutine initialization_ms()
     fs%imedia(:,:,:) = 0
 
     if (nx_m_dielec_sub > 0) then
-        fw%epsilon%f(nx_m + 1:nx_m + nx_m_dielec_sub, :, :) = epsilon_dielec_sub
+        do ilayer = 1, ndielectric_layers
+            ix_stack = (ilayer - 1) * (nx_m + nx_m_dielec_sub)
+            fw%epsilon%f(ix_stack + nx_m + 1:ix_stack + nx_m + nx_m_dielec_sub, :, :) = epsilon_dielec_sub
+        end do
     end if
 
     allocate(ms%curr(1:3, 1:ms%nmacro))
@@ -288,16 +296,20 @@ subroutine initialization_ms()
         & fs%mg%is(1):fs%mg%ie(1), &
         & fs%mg%is(2):fs%mg%ie(2), &
         & fs%mg%is(3):fs%mg%ie(3)))
+    ms%imacro_tbl = 0
 
     i = 1
-    do iz = 1, nz_m
-        do iy = 1, ny_m
-            do ix = 1, nx_m
-                ms%imacro_tbl(ix, iy, iz) = i
-                ms%ixyz_tbl(1, i) = ix
-                ms%ixyz_tbl(2, i) = iy
-                ms%ixyz_tbl(3, i) = iz
-                i = i + 1
+    do ilayer = 1, nmaterial_layers
+        ix_stack = (ilayer - 1) * (nx_m + nx_m_dielec_sub)
+        do iz = 1, nz_m
+            do iy = 1, ny_m
+                do ix = 1, nx_m
+                    ms%imacro_tbl(ix + ix_stack, iy, iz) = i
+                    ms%ixyz_tbl(1, i) = ix + ix_stack
+                    ms%ixyz_tbl(2, i) = iy
+                    ms%ixyz_tbl(3, i) = iz
+                    i = i + 1
+                end do
             end do
         end do
     end do
@@ -743,8 +755,7 @@ subroutine write_wave_data_file()
 
     iiy = fs%mg%is(2)
     iiz = fs%mg%is(3)
-    ix_tra = nx_m
-    if (nx_m_dielec_sub > 0) ix_tra = nx_m + nx_m_dielec_sub
+    ix_tra = nx_stack
 
     ! Left side boundary:
     dx_Ac(:) = (fw%vec_Ac%v(:,0,iiy,iiz) - fw%vec_Ac%v(:,-1,iiy,iiz)) / fs%hgs(1)

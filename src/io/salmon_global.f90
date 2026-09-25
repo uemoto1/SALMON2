@@ -210,6 +210,7 @@ module salmon_global
 !! &multiscale
   character(16)  :: fdtddim
   character(16)  :: twod_shape
+  integer        :: nlayer
   integer        :: nx_m
   integer        :: nx_m_dielec_sub
   real(8)        :: epsilon_dielec_sub
