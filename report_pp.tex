@@ -3,388 +3,589 @@
 \usepackage{lmodern}
 \usepackage{amsmath,amssymb}
 \usepackage{longtable,array,booktabs}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
 \usepackage[margin=23mm]{geometry}
 \usepackage{listings}
 \usepackage[dvipdfmx,hidelinks]{hyperref}
 \usepackage{pxjahyper}
 \newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\mem}[2]{\code{#1}\texttt{\%}\code{#2}}
 \newcommand{\src}[2]{\par\noindent{\small 参照：\code{#1}、#2行付近。}\par}
+\newcommand{\issue}[1]{〔要確認#1〕}
 \lstset{basicstyle=\small\ttfamily,columns=fullflexible,keepspaces=true,
   breaklines=true,frame=single,numbers=none}
 \setlength{\emergencystretch}{3em}
 \title{SALMON2 擬ポテンシャル読み込み・前処理の解析\\
-  \large \code{s_pp_info} のメンバ、動径範囲、入力形式による相違}
+  \large \code{s_pp_info} の構成、Kleinman--Bylander 形式との対応、形式による相違}
 \author{ソースコード調査レポート}
 \date{2026年9月24日}
 \begin{document}
 \maketitle
 \begin{abstract}
-本稿は、\code{src/common/structures.f90} の \code{s_pp_info} と、
-\code{src/atom/pp/input_pp.f90}、\code{src/atom/pp/prep_pp.f90} を中心に、
-擬ポテンシャル情報の読み込み、動径テーブル生成、実空間格子への展開を整理する。
-とくに、配列容量を表す \code{lmax,lmax0,nrmax,nrmax0}、入力データ範囲を表す
-\code{mr}、非局所部分の有効範囲を表す \code{nrps} を区別する。
-また、ファイル内に波動関数・密度が存在することと、読み込み実装がそれを保存・利用することを区別し、
-PSP8 の価電子密度が保存されない点などを記録する。
+SALMON2 が擬ポテンシャルをどう読み込み、どの変数に保存し、実空間格子へどう展開するかを
+ソースコードから整理した。対象は構造体 \code{s_pp_info} と、
+\code{input_pp.f90}（読み込み・動径テーブル生成）、\code{prep_pp.f90}（格子への展開）を中心とする処理である。
+局所・非局所ポテンシャルが Kleinman--Bylander（KB）形式のどの量としてどの変数に入るか、
+初期密度生成 \code{calc_density_pp} が何を使うか、擬波動関数を持つ5つの類似変数の違いを明らかにした。
+あわせて、入力形式や計算オプションによって必要な情報が保存されず、しかも停止も警告もされない経路を
+第\ref{sec:issues}節に一覧した。
 \end{abstract}
 \tableofcontents
 \clearpage
 
-\section{調査範囲と読み方}
-対象は調査時点の作業ディレクトリ内のソースである。中心となる3ファイルに加え、初期化元の
-\code{salmon_pp.f90}、形式別の \code{read_ps_upf_module.f90} と
-\code{read_paw_upf_module.f90}、密度生成の \code{prep_density_pp.f90}、
-\code{src/gs/initialization_dft.f90} と \code{src/gs/init_gs.f90} を確認した。
-本稿は静的なデータフロー解析であり、各形式の入力ファイルを用いた数値実行試験ではない。
-行番号は調査時点の目安であり、変更後にはルーチン名で照合する必要がある。
+%======================================================================
+\section{調査の範囲と表記}
+\subsection{範囲}
+中心となる3ファイル（\code{structures.f90}、\code{input_pp.f90}、\code{prep_pp.f90}）に加え、
+次のファイルを確認した。
+\begin{itemize}
+\item 初期化：\code{salmon_pp.f90}
+\item 形式別の読み込み：\code{read_ps_upf_module.f90}、\code{read_paw_upf_module.f90}
+\item 初期密度：\code{prep_density_pp.f90}、\code{initialization_dft.f90}、\code{init_gs.f90}
+\item 後段の利用：\code{nonlocal_potential.f90}、\code{prep_pp_so.f90}、\code{prep_pp_plusu.f90}、\code{write.f90}
+\end{itemize}
+本稿は代入と分岐を追った静的な解析であり、実際の入力ファイルによる実行試験はしていない。
+行番号は調査時点の目安である。
 
-以下では、\code{ik} を元素種、\code{ia} を原子、\code{i} を動径添字、
-$\ell$ を角運動量、$p$ を射影子の通し番号とする。
-ソースでは角運動量に \code{ll}、射影子番号にも \code{l} が使われる箇所がある。
-\code{nproj(ell,ik)} は磁気量子数による縮退を含まない動径射影子数である。
+\subsection{表記}
+\code{ik} は元素種、\code{ia} は原子、\code{i} は動径の添字、$\ell$ は角運動量、$p$ は射影子の通し番号を表す。
+ソースでは角運動量に \code{ll}、射影子番号に \code{l} を使う箇所が多い。
+\code{nproj(ll,ik)} は角運動量 \code{ll} の動径射影子の数で、磁気量子数による縮退は含まない。
 
-\section{処理全体の役割分担}
+入力形式は、非局所部分の与え方で次の2種類に分けて呼ぶ。
+\begin{itemize}
+\item \textbf{ポテンシャル形式}：KY、ABINIT、ABINITFHI、FHI。角運動量ごとのポテンシャル $V_\ell$ と
+擬波動関数 $u_\ell$ を読み、射影子をプログラム内で作る。
+\item \textbf{射影子形式}：PSP8（\code{ABINITPSP8}）、ADPACK、UPF。射影子、KB係数、局所ポテンシャルを直接読む。
+ソース中のフラグ \code{flag_beta_proj_is_given} が真になる形式である。
+\end{itemize}
+UPF はさらに、ファイル名に \code{paw} または \code{PAW} を含むかどうかで、通常UPFとPAW-UPFの2つの経路に分かれる。
+
+%======================================================================
+\section{処理の流れ}
 \begin{enumerate}
-\item \code{salmon_pp.f90: read_pslfile -> init_pp}：
-配列確保、元素記号・質量、容量、初期値を設定する。一部形式ではヘッダを事前に読む。
-\item \code{input_pp.f90: input_pp}：ルートMPIプロセス上で元素種ごとに
-形式別読み込み、カットオフ設定、規格化、maskingの有無に応じたテーブル生成を行う。
-終了時に主要な元素別テーブルをMPI broadcastする。
-\item \code{prep_pp.f90: init_ps}：動径テーブルと原子位置を用い、格子点の列挙、
-非局所射影子の補間、局所ポテンシャルの生成を行う。
+\item \textbf{初期化}（\code{salmon_pp.f90}：\code{read_pslfile} から \code{init_pp}）：
+配列の確保、元素記号と質量の設定、初期値の設定を行う。一部の形式ではヘッダを事前に読む。
+\item \textbf{読み込みとテーブル生成}（\code{input_pp.f90}：\code{input_pp}）：
+ルートMPIプロセスが元素ごとに次の処理を行い、最後に主要なテーブルをbroadcastする。
+形式別の読み込み、カットオフの設定、係数の規格化、maskingの有無に応じたテーブル生成である。
+\item \textbf{格子への展開}（\code{prep_pp.f90}：\code{init_ps}）：
+原子ごとの格子点の列挙、非局所射影子の補間、局所ポテンシャルの生成を行う。
 \end{enumerate}
-
-\code{prep_pp.f90} の \code{pp} は \code{intent(in)} である。
-このファイルは \code{s_pp_info} を更新せず、結果を \code{s_pp_grid} 型の
-\code{ppg}、\code{Vpsl}、必要な作業領域へ書き込む。
-したがって「prep段階でppのメンバに情報が追加される」という理解は正しくない。
+\code{prep_pp.f90} では \code{pp} は \code{intent(in)} であり、\code{s_pp_info} を更新しない。
+結果は \code{s_pp_grid} 型の \code{ppg} と \code{Vpsl} に書かれる。
 \src{src/atom/pp/salmon_pp.f90}{22}
 \src{src/atom/pp/input_pp.f90}{28}
 \src{src/atom/pp/prep_pp.f90}{22}
 
-\section{容量・入力範囲・有効範囲の区別}
-\subsection{6変数の意味と決定元}
-\begin{longtable}{@{}p{25mm}p{32mm}p{98mm}@{}}
-\toprule 変数 & 決定元・現在の値 & 意味\\\midrule\endhead
-\code{lmax0} & \code{init_pp} 内の定数、8 & 読み込み作業配列の角運動量容量。入力の最大角運動量の検査にも使う。\\
-\code{lmax} & 呼び出し元から設定、8 & 元素別テーブルと格子展開用配列の角運動量容量。実際の元素別上限は \code{mlps(ik)}。\\
-\code{nrmax0} & \code{init_pp} 内の定数、50000 & \code{upp,vpp} などの動径作業配列の添字上限。動径添字は \code{0:nrmax0}。\\
-\code{nrmax} & 孤立系20000、周期系3000 & \code{rad} と元素別動径テーブルの確保長。ファイル外側への動径座標延長の範囲にも使う。\\
-\code{mr(ik)} & ファイルの点数・読み込み件数から決定 & 入力由来の動径データ範囲。形式により点数との対応が異なり、常に点数または最終添字のどちらか一方とはいえない。\\
-\code{nrps(ik)} & 読み込み後、\code{rps} と \code{rad} から計算 & 非局所射影子テーブルの有効範囲の終端。masking時には再計算する。\\
+%======================================================================
+\section{動径データの範囲と添字}\label{sec:range}
+\subsection{配列容量・入力範囲・有効範囲}
+名前が似ているが、意味が異なる6つの変数がある。
+\begin{longtable}{@{}P{22mm}P{36mm}P{97mm}@{}}
+\toprule 変数 & 決定元・現在値 & 意味と主な用途\\\midrule\endhead
+\code{lmax0} & \code{init_pp} 内の定数、8 & 作業配列の角運動量の容量。入力の最大角運動量の検査にも使う。\\
+\code{lmax} & 呼び出し元、8 & 元素別テーブルと \code{ppg} の角運動量の容量。元素ごとの実際の上限は \code{mlps(ik)}。\\
+\code{nrmax0} & \code{init_pp} 内の定数、50000 & \code{upp,vpp} など作業配列の動径添字の上限（\code{0:nrmax0}）。\\
+\code{nrmax} & 孤立系20000、周期系3000 & \code{rad} と元素別テーブルの確保長。ファイルの外側へ動径座標を延長する範囲でもあり、孤立系の局所項はここまで参照する。\\
+\code{mr(ik)} & ファイルの点数から決まる & 入力データのある動径範囲。規格化、微分、テーブル生成、初期密度の積分の範囲になる。\\
+\code{nrps(ik)} & \code{rps} と \code{rad} から計算 & 非局所射影子の有効範囲の終端。補間とスプラインの範囲になる。maskingで再計算される。\\
+\bottomrule
+\end{longtable}
+いずれも3次元の実空間格子の点数ではない。実空間格子は \code{lg,mg} が管理する。
+原子ごとに非局所領域に入る格子点の数は \mem{ppg}{mps(ia)}、その容量は \mem{ppg}{nps} である。
+
+\code{lmax} と \code{lmax0} は現在どちらも8だが、役割が違う。
+射影子形式では、作業配列の第2添字は射影子番号である。$\ell$ ごとに最大2本の射影子を想定し、
+\code{0:2*lmax0+1} を確保する。\code{vpp} は局所ポテンシャル用にもう1列を持ち、\code{(0:nrmax0,0:2*lmax0+2)} となる。
+
+\subsection{形式による mr の決め方}
+\begin{longtable}{@{}P{32mm}P{123mm}@{}}
+\toprule 形式 & 本読み込み後の \code{mr}\\\midrule\endhead
+KY & ヘッダの値。\code{0:mr} を読む。\\
+ABINIT / PSP8 & \code{mmax-1}。PSP8は \code{mmax} 点を読む。事前のヘッダ読み込みでは \code{mmax} が入るので値が変わる。\\
+ABINITFHI / FHI & \code{mr_l}。原点の値はプログラム側で与える。\\
+ADPACK & 読み込んだ行数 \code{icount}。原点を追加する。\\
+通常UPF & 最初の半径が0なら \code{nrr}、そうでなければ原点を追加して \code{nrr+1}。\\
 \bottomrule
 \end{longtable}
 
-\subsection{処理段階との対応}
-\begin{longtable}{@{}p{24mm}p{42mm}p{43mm}p{46mm}@{}}
-\toprule 変数 & 読み込み & 前処理・生成 & 実空間格子への展開\\\midrule\endhead
-\code{lmax0} & 作業配列容量と入力検査 & 一時配列容量。値は不変 & \code{prep_pp} で直接使用しない\\
-\code{lmax} & 保存容量と入力検査 & 射影子テーブル容量。値は不変 & \code{ppg} の配列容量\\
-\code{nrmax0} & 作業配列容量と入力検査 & masking用一時配列など。値は不変 & \code{prep_pp} で直接使用しない\\
-\code{nrmax} & 動径座標・保存テーブル容量 & 外側への延長、\code{nrps} の探索・検査 & 補間係数の確保長、孤立系局所項の探索範囲\\
-\code{mr} & 読み込みループ範囲 & 規格化、微分、密度・テーブル生成範囲 & \code{prep_pp} では直接使わない。初期密度生成では積分範囲\\
-\code{nrps} & 通常は直接読まない & カットオフから生成・maskingで更新 & 非局所補間係数の作成と区間探索\\
-\bottomrule
-\end{longtable}
-
-これらは3次元実空間格子の点数ではない。実空間格子は \code{lg,mg} が管理する。
-原子ごとの非局所領域に入る実空間格子点数は \code{ppg}\texttt{\%}\code{mps(ia)}、その容量は
-\code{ppg}\texttt{\%}\code{nps} である。
-
-現在は \code{lmax=lmax0=8} だが意味は異なる。
-射影子形式では作業配列の第2添字は角運動量そのものではなく射影子番号となり、
-最大2個の動径射影子を各角運動量に想定して、おおむね $2(\code{lmax0}+1)$ 個分を確保する。
-局所ポテンシャル用にさらに1列を持つ \code{vpp} の確保範囲は
-\code{(0:nrmax0,0:2*lmax0+2)} である。
-
-\subsection{形式によるmrの違い}
-\begin{longtable}{@{}p{35mm}p{120mm}@{}}
-\toprule 形式 & 本読み込み後の設定\\\midrule\endhead
-KY & ヘッダから \code{mr} を読み、\code{0:mr} の値を読む。\\
-ABINIT / PSP8 & \code{mr=mmax-1}。PSP8は \code{mmax} 個の動径点を読む。\\
-ABINITFHI / FHI & \code{mr=mr_l}。正半径のデータに加え、原点の波動関数・ポテンシャルをプログラム側で設定する。\\
-ADPACK & 読み込み件数 \code{icount} を設定し、原点を追加する。\\
-通常UPF & 入力の最初の半径が0なら \code{mr=nrr}。そうでなければ原点を追加して \code{mr=nrr+1}。\\
-\bottomrule
-\end{longtable}
-
-事前ヘッダ読み込みと本読み込みで値が変わる場合もある。例えばABINIT系の事前読み込みは
-\code{mmax} を入れるが、本読み込みでは \code{mmax-1} になる。
-各ループの上下限と配列の添字規約を合わせて読む必要がある。
-
-\subsection{添字、外側補完、nrpsの生成}
-基本的な座標対応は次のとおりである。
+\subsection{添字と動径座標の対応}\label{sec:index}
+配列によって、添字 \code{i} が指す動径座標が1つずれる。本稿で扱う配列の対応を次にまとめる。
 \begin{lstlisting}
-upp(i,p), vpp(i,p)       <-> rad(i+1,ik)
-udvtbl(i,p,ik)           <-> radnl(i,ik)
-vloctbl(i,ik)            <-> rad(i,ik)
+upp, dupp, vpp, dvpp, vpp_so           (i)      <-> rad(i+1,ik)
+upp_f, vpp_f                           (i,:,ik) <-> rad(i+1,ik)
+udvtbl, dudvtbl, udvtbl_so             (i,:,ik) <-> radnl(i,ik) = rad(i,ik)
+vloctbl, dvloctbl                      (i,ik)   <-> rad(i,ik)
+upptbl_ao                              (i,:,ik) <-> rad(i,ik)
+rho_pp_tbl (as read by calc_density_pp)  (i,ik) <-> rad(i,ik)
 \end{lstlisting}
-KYは等間隔格子、ABINITは形式固有の式、FHI系は比率による格子延長などを用いる。
-読み込み後の共通処理には、\code{mr+1:nrmax} について
-\code{upp} を0、\code{vpp} の \code{0:mlps} 列を \code{-zps/rad(i)} とする処理がある。
-ただし、射影子形式ではこれらの列がポテンシャルでない場合があり、局所列も末尾に移動する。
-この共通処理を「全形式の局所ポテンシャルを正しく延長する処理」と一律には解釈できない。
+作業配列（1行目）と、その元素別コピー（2行目）は \code{rad} より1つ小さい添字を使う。
+最終テーブル（3--5行目）は \code{rad} と同じ添字を使う。
+\code{rho_pp_tbl} は6行目の対応を想定して読まれる。通常UPFの読み込みはこれに合っているが、
+ポテンシャル形式で \code{upp} から生成する場合は1行目の規約の値が入り、1点ずれる（第\ref{sec:issues}節、\issue{A8}）。
 
-チャネル別カットオフ \code{rrc} が非ゼロなら、その最大値を \code{rps} に設定する。
-その後、\code{rad(i)>rps} を初めて満たす \code{i} を \code{nrps} とする。
-\code{nrps>=nrmax} は停止条件である。
-\code{nrloc=nrps}、\code{rloc=rps}、\code{radnl=rad} もこの段階で設定する。
+\subsection{カットオフと外側の延長}
+チャネル別カットオフ \code{rrc} に非ゼロの値があれば、その最大値を \code{rps} とする。
+\code{rad(i)>rps} を初めて満たす \code{i} が \code{nrps} で、\code{nrps>=nrmax} なら停止する。
+同時に \code{nrloc=nrps}、\code{rloc=rps}、\code{radnl=rad} が設定される。
+maskingでは \code{rps=gamma_mask*rps} として \code{nrps} を探し直し、\code{rps=rad(nrps)} と格子点に合わせる。
+\code{nrloc,rloc} はmasking前の値のまま残る。
+\src{src/atom/pp/input_pp.f90}{110、1324}
+
+読み込み後、\code{mr+1:nrmax} の範囲に共通の延長処理がある。
+\code{upp} を0にし、\code{vpp} の列 \code{0:mlps} を $-Z/r$（\code{-zps/rad(i)}）にする（105--106行）。
+この処理は、孤立系の局所ポテンシャルの外側を与えるためのものである。
+ただし射影子形式では、局所列が \code{0:mlps} の外にあるので延長されない（第\ref{sec:vpp}節、\issue{A2}）。
 \src{src/atom/pp/input_pp.f90}{103}
 
-maskingでは \code{rps=gamma_mask*rps} として \code{nrps} を再探索し、
-\code{rps=rad(nrps)} と格子点に合わせる。\code{mr,nrmax,nrmax0} や座標配列自体は変えない。
-\code{nrloc,rloc} はmasking前の値を保持する。
-なお \code{nrmax0} の検査だけで、より短い \code{rad(nrmax,...)} などの
-配列境界がすべて保証されるわけではない。
-\src{src/atom/pp/input_pp.f90}{1324}
-
-\section{s\_pp\_infoの全メンバの役割と設定箇所}
-容量・範囲の6変数は前節で説明した。以下に残りのメンバをまとめる。
+%======================================================================
+\section{s\_pp\_info のメンバ一覧}\label{sec:members}
+第\ref{sec:range}節の6変数を除くメンバを、用途別にまとめる。
+詳しい説明がある場合は該当節を示す。
 \src{src/common/structures.f90}{229}
 
 \subsection{元素・チャネル情報}
-\begin{longtable}{@{}p{39mm}p{116mm}@{}}
-\toprule メンバ & 役割と書き込み\\\midrule\endhead
-\code{zion} & 読み込み中の擬イオン電荷の実数スカラー。ABINIT、PSP8、ADPACK、UPFで設定。元素別保存先ではなく、KY/FHI系は経由しない。\\
-\code{zps(:)} & 元素別の整数擬イオン電荷。各形式のヘッダ等から設定し、クーロン項や初期密度の電子数に使う。\\
-\code{atom_symbol(:)} & \code{init_pp} が \code{izatom} に応じて設定。ログとファイル名に使用。\\
-\code{rmass(:)} & \code{init_pp} の元素表で設定。読み込み後に \code{system}\texttt{\%}\code{mass} へコピー。\\
-\code{mlps(:)} & 各元素で使う最大角運動量。ファイルから設定。KY、ABINIT、ABINITFHI、FHIでは非負の \code{Lmax_ps} 指定で上書きする。\\
-\code{lref(:)} & 局所ポテンシャルの列番号。初期値は \code{lloc_ps}。PSP8、ADPACK、UPFでは局所項を独立した末尾列に置き、その列番号へ変更する。\\
-\code{nproj(:,:)} & 角運動量ごとの動径射影子数。初期値0。射影子形式で読み込み・集計し、全列0なら \code{0:mlps} を各1に設定。\\
-\code{num_orb(:)} & 初期値0。PAW-UPF事前読み込みで軌道／射影子チャネル数を設定し、PAW側の配列確保に利用。\\
+\begin{longtable}{@{}P{33mm}P{122mm}@{}}
+\toprule メンバ & 役割と設定\\\midrule\endhead
+\code{zps(:)} & 元素ごとの整数の擬イオン電荷（価電子数）。クーロン項と初期密度に使う。\\
+\code{zion} & 読み込み中に使う実数の一時値。ABINIT、PSP8、ADPACK、UPFで設定される。元素別の保存先ではない。\\
+\code{atom_symbol(:)}、\code{rmass(:)} & \code{init_pp} が原子番号から設定する。\code{rmass} は \mem{system}{mass} にコピーされる。\\
+\code{mlps(:)} & 元素ごとの最大角運動量。ファイルから設定する。ポテンシャル形式では、入力 \code{Lmax_ps} が非負ならその値で上書きする。\\
+\code{lref(:)} & 局所ポテンシャルが入る \code{vpp} の列番号（第\ref{sec:vpp}節）。\\
+\code{nproj(:,:)} & 角運動量ごとの射影子数。射影子形式で読み込み、全て0なら \code{0:mlps} を各1にする。\\
+\code{num_orb(:)} & PAW-UPFの事前読み込みで設定し、PAW側の配列確保に使う。\\
 \bottomrule
 \end{longtable}
 
-\subsection{座標と局所・非局所の範囲}
-\begin{longtable}{@{}p{39mm}p{116mm}@{}}
-\toprule メンバ & 役割と書き込み\\\midrule\endhead
-\code{rad(:,:)} & 元素別動径座標。形式別に読み込み・生成・延長。\\
-\code{radnl(:,:)} & 非局所補間用動径座標。共通処理で \code{rad} をコピー。独立した再メッシュはしない。\\
-\code{rps(:)} & 非局所射影子の空間範囲。通常は \code{rrc} の最大値。PAW経路では直接設定も行う。maskingで更新。\\
-\code{rloc(:)}、\code{nrloc(:)} & masking前の \code{rps,nrps} を保存。局所項のフーリエ変換は \code{nrloc} を積分終端とする。\\
-\code{rps_ao(:)}、\code{nrps_ao(:)} & DFT+U用原子軌道範囲。masking前の \code{rps,nrps} をコピー。\code{upp} の非ゼロ領域を走査する処理はあるが、走査結果を代入する行はコメントアウトされている。\\
+\subsection{座標と範囲}
+\begin{longtable}{@{}P{33mm}P{122mm}@{}}
+\toprule メンバ & 役割と設定\\\midrule\endhead
+\code{rad(:,:)} & 元素ごとの動径座標。形式ごとの規則で \code{nrmax} まで延長する。\\
+\code{radnl(:,:)} & 非局所補間用の座標。\code{rad} のコピーで、独自のメッシュではない。\\
+\code{rps(:)} & 非局所射影子の空間範囲。maskingで更新される。\\
+\code{rloc(:)}、\code{nrloc(:)} & masking前の \code{rps,nrps}。周期系の局所項の積分終端に使う。\\
+\code{rps_ao(:)}、\code{nrps_ao(:)} & DFT+U用の原子軌道の範囲。masking前の \code{rps,nrps} と同じ値（第\ref{sec:pswf_plusu}節）。\\
 \bottomrule
 \end{longtable}
 
-\subsection{作業配列と保存配列}
-\begin{longtable}{@{}p{39mm}p{116mm}@{}}
-\toprule メンバ & 役割と書き込み\\\midrule\endhead
-\code{upp(:,:)} & 元素ごとに再利用する動径波動関数。KY、ABINIT、FHI系で読み込む。maskingなしでは半径・角度因子を掛けて上書き。射影子形式は原則これを読まない。\\
-\code{vpp(:,:)} & 波動関数入力形式では角運動量別ポテンシャル。射影子形式では射影子と独立した局所列を格納。\\
-\code{dupp(:,:)} & maskingなしで、変換後の \code{upp} の動径微分を差分計算。\\
-\code{dvpp(:,:)} & maskingなしで \code{vpp} の動径微分を差分計算。形式により微分対象がポテンシャルまたは射影子となる。\\
-\code{upp_f(:,:,:)} & 各元素の処理末尾で \code{upp} をコピー。maskingなしでは変換済み、ありでは \code{upp} を直接変換しないため、内容の意味が経路で異なる。\\
-\code{vpp_f(:,:,:)} & 各元素の処理末尾で \code{vpp} をコピー。孤立系局所項の補間で \code{lref} 列を使用。\\
-\code{vpp_so(:,:)} & ADPACK、SO対応UPFから読むSO用追加射影子。\\
-\code{dvpp_so(:,:)} & maskingなしのSO処理で \code{vpp_so} の微分を設定。\\
-\code{vpp_f_so(:,:,:)} & 宣言のみ。調査した \code{src} 内に確保・代入・利用が見当たらない。\\
-\bottomrule
-\end{longtable}
-maskingありでは微分をローカル作業配列に計算するため、\code{dupp,dvpp} に
-意味のある結果が常に存在すると考えてはいけない。
-\src{src/atom/pp/input_pp.f90}{234、848、1111}
-
-\subsection{規格化と最終テーブル}
-\begin{longtable}{@{}p{39mm}p{116mm}@{}}
-\toprule メンバ & 役割と書き込み\\\midrule\endhead
-\code{anorm(:,:)} & 共通処理で規格化係数の絶対値の平方根を設定。射影子形式では読み込んだ係数を変換。\\
-\code{inorm(:,:)} & 係数の符号 $+1/-1$。元の絶対値が $10^{-10}$ 未満なら0。\\
-\code{anorm_so(:,:)}、\code{inorm_so(:,:)} & SO用の対応する係数と符号。SO検出時に変換。\\
-\code{vloctbl(:,:)} & \code{making_ps_*} で局所列から生成する局所ポテンシャル。\\
-\code{dvloctbl(:,:)} & 同じ段階で計算する局所ポテンシャルの動径微分。\\
-\code{udvtbl(:,:,:)} & 規格化と半径・角度因子の処理を済ませた非局所射影子の動径テーブル。\\
-\code{dudvtbl(:,:,:)} & 上記の動径微分。\\
-\code{udvtbl_so(:,:,:)}、\code{dudvtbl_so(:,:,:)} & \code{making_ps_*_so} が作るSO用の対応するテーブル。\\
+\subsection{ポテンシャル・射影子の配列}
+\begin{longtable}{@{}P{33mm}P{122mm}@{}}
+\toprule メンバ & 役割（詳細は第\ref{sec:kb}節）\\\midrule\endhead
+\code{vpp(:,:)}、\code{dvpp(:,:)} & 作業配列。ポテンシャル形式では $V_\ell$、射影子形式では射影子と局所ポテンシャル。\code{dvpp} はその微分。\\
+\code{vpp_f(:,:,:)} & 各元素の処理の最後に \code{vpp} をコピーしたもの。孤立系の局所項に使う。\\
+\code{vpp_so}、\code{dvpp_so} & スピン軌道用の追加射影子とその微分（ADPACK、SO対応UPF）。\\
+\code{anorm}、\code{inorm} & KB係数の大きさの平方根と符号。\code{anorm_so,inorm_so} はSO用。\\
+\code{vloctbl}、\code{dvloctbl} & 局所ポテンシャルのテーブルとその微分。\\
+\code{udvtbl}、\code{dudvtbl} & 非局所射影子の動径テーブルとその微分。\code{udvtbl_so,dudvtbl_so} はSO用。\\
+\code{vpp_f_so} & 宣言だけで、確保・代入・参照がない。\\
 \bottomrule
 \end{longtable}
 
-読み込み時の波動関数を $u_\ell(r)$、$\Delta V_\ell=V_\ell-V_{\rm loc}$ とすると、
-ポテンシャル・波動関数入力では、コードの離散和により
-\begin{equation}
- A_\ell\simeq\int u_\ell(r)^2\Delta V_\ell(r)\,dr,
- \qquad a_\ell=\sqrt{|A_\ell|},\qquad s_\ell=\operatorname{sgn}(A_\ell)
-\end{equation}
-を計算し、\code{anorm} に $a_\ell$、\code{inorm} に $s_\ell$ を入れる。
-ゼロ判定された項は後段で除外される。maskingなしの非ゼロ項のテーブルは
-\begin{equation}
- T_\ell(r)=\frac{u_\ell(r)\Delta V_\ell(r)}{a_\ell}
- \frac{\sqrt{(2\ell+1)/(4\pi)}}{r^{\ell+1}}
-\end{equation}
-に相当する。原点では別途コピー・外挿処理を行う。
+\subsection{擬波動関数の配列}
+\code{upp}、\code{dupp}、\code{upp_f}、\code{upptbl_ao}、\code{dupptbl_ao} の5つがある。
+違いは第\ref{sec:pswf}節で説明する。
 
-射影子入力では、読み込んだ係数 $D_p$ に対し $a_p=\sqrt{|D_p|}$ とする。
-形式別変換後の \code{vpp} 内の射影子を $b_p(r)$ と書けば、maskingなしでは
-\begin{equation}
- T_p(r)=a_p b_p(r)\frac{\sqrt{(2\ell+1)/(4\pi)}}{r^{\ell+1}}
-\end{equation}
-となる。前者は規格化係数で割り、後者は掛ける点が異なる。
-maskingありでは $u\Delta V$ または射影子を一時配列に取り、フーリエ空間の
-フィルタリングとマスク処理を行ってからテーブル化する。
-\src{src/atom/pp/input_pp.f90}{147、848、1200}
-
-\subsection{密度・NLCC・原子軌道}
-\begin{longtable}{@{}p{39mm}p{116mm}@{}}
-\toprule メンバ & 役割と書き込み\\\midrule\endhead
-\code{rho_pp_tbl(:,:)} & 初期電子密度用の動径分布。$dr$積分が電子数に対応する量で、3次元密度そのものではない。通常UPFから読むか、条件付きで \code{upp} から生成する。\\
-\code{flag_nlcc} & 冒頭で偽にし、各元素のNLCCフラグとの論理和で更新する。\\
-\code{rho_nlcc_tbl(:,:)} & \code{making_ps_*} で0に初期化後、NLCCありなら \code{rhor_nlcc(i-1,0)} をコピー。中心値との比が $10^{-7}$ 未満で終了。\\
-\code{tau_nlcc_tbl(:,:)} & 同じループで $\frac14(\rho'_c)^2/\rho_c$ を設定。微分情報が読み込み側で提供されるかに依存する。\\
-\code{upptbl_ao(:,:,:)} & maskingなしで変換後の \code{upp(i-1,p)} をコピーするDFT+U用テーブル。maskingありでは対応する代入がない。\\
-\code{dupptbl_ao(:,:,:)} & 原子軌道微分用と読める名称だが、\code{init_pp} の確保・ゼロ初期化以外に計算・利用が見当たらない。\\
+\subsection{密度とNLCC}
+\begin{longtable}{@{}P{33mm}P{122mm}@{}}
+\toprule メンバ & 役割と設定\\\midrule\endhead
+\code{rho_pp_tbl(:,:)} & 初期密度用の動径密度 $4\pi r^2\rho(r)$。書き込まれる経路は限られる（第\ref{sec:rho_pp_tbl}節）。\\
+\code{flag_nlcc} & 各元素のNLCCフラグの論理和。\\
+\code{rho_nlcc_tbl(:,:)} & NLCCのコア密度。中心値との比が $10^{-7}$ 未満になった点で打ち切る。\\
+\code{tau_nlcc_tbl(:,:)} & $\frac14(\rho_c')^2/\rho_c$。密度の微分を読み込み側が与えるかどうかに依存する\issue{A7}。\\
 \bottomrule
 \end{longtable}
 
-\section{ファイル形式と情報の読み込み・保存}
-\subsection{形式別一覧}
-この表は形式の一般仕様ではなく、現在の読み込み実装が行う処理を示す。
-\begin{longtable}{@{}p{25mm}p{40mm}p{47mm}p{43mm}@{}}
-\toprule 形式 & 波動関数 & 価電子密度 & コア密度\\\midrule\endhead
-KY & \code{upp} に読む & \code{rhopp} に読むが永続保存しない & 部分コアのヘッダ情報は読むが補正は未実装\\
-ABINIT & \code{upp} に読む & 密度テーブルの読み込みなし & NLCCテーブルを構築しない\\
-ABINITFHI & \code{upp} に読む & 読み込みなし & 末尾にあれば密度と微分を読む\\
-FHI & \code{upp} に読む & 読み込みなし & このルーチンでは読まない\\
-PSP8 & 読まない & 読むが積分値表示のみ。\code{rho_pp_tbl} に保存しない & \code{fchrg>0} なら密度と微分を読む\\
-ADPACK & 読まない & 読み込みなし & \code{density.PCC} があれば密度を読む。微分は読まない\\
-通常UPF & \code{PP_PSWFC/PP_CHI} を読む処理なし & \code{PP_RHOATOM} を \code{rho_pp_tbl} に保存 & \code{PP_NLCC} を読む。微分の読み込み・生成なし\\
-PAW-UPF & \code{PP_CHI} を \code{upp_f}、部分波を \code{paw} 配列へ & \code{paw}\texttt{\%}\code{rhops} に読む & \code{paw}\texttt{\%}\code{rhocps/rhocae} に読む\\
+%======================================================================
+\section{形式別の読み込み内容}\label{sec:formats}
+次の表は、ファイル形式の仕様ではなく、現在の読み込み実装が実際に保存する内容を示す。
+「ファイルにある」ことと「読み込まれ、保存され、後段で使われる」ことは別である。
+\begin{longtable}{@{}P{20mm}P{35mm}P{44mm}P{50mm}@{}}
+\toprule 形式 & 擬波動関数 & 価電子密度 & コア密度（NLCC）\\\midrule\endhead
+KY & \code{upp} に読む & 局所変数に読むが保存しない & ヘッダは読むが補正は未実装\\
+ABINIT & \code{upp} に読む & 読まない & テーブルを作らない\\
+ABINITFHI & \code{upp} に読む & 読まない & 末尾にあれば密度と微分を読む\\
+FHI & \code{upp} に読む & 読まない & 読まない\\
+PSP8 & 読まない & 読むが積分値を表示するだけで保存しない & \code{fchrg>0} なら密度と微分を読む\\
+ADPACK & 読まない & 読まない & \code{density.PCC} があれば密度を読む。微分は読まない\\
+通常UPF & 読まない（\code{PP_PSWFC/PP_CHI} を読む処理がない） & \code{PP_RHOATOM} を \code{rho_pp_tbl} に保存 & \code{PP_NLCC} を読む。微分は読まない\\
+PAW-UPF & \code{PP_CHI} を \code{upp_f} に読むが、後で上書きされる\issue{C4} & \mem{paw}{rhops} にだけ保存 & \mem{paw}{rhocps,rhocae} にだけ保存\\
 \bottomrule
 \end{longtable}
-
-KY、ABINIT、FHI系は角運動量別ポテンシャルと波動関数から非局所射影子を構成する。
-PSP8、ADPACK、UPFは射影子・係数・局所ポテンシャルを入力として使用する。
-例えばADPACKは射影子に半径を掛け、UPFはエネルギー単位の変換を含む処理を行うため、
-\code{vpp} をファイルの生データと同一視することもできない。
-\src{src/atom/pp/input_pp.f90}{288、343、402、498、614、686}
-\src{src/atom/pp/read_ps_upf_module.f90}{274、297}
-
-\subsection{PSP8の密度は読み捨てられる}
-PSP8の価電子密度部分は、次のように局所変数へ読み、積分値だけを表示する。
+PSP8の価電子密度は、ファイルにあるのに使えない代表例である。
+次のように局所変数へ読み、積分値を表示するだけで、\code{rho_pp_tbl} への代入がない。
 \begin{lstlisting}[language=Fortran]
-sum_rho_pp=0.0d0
 do i=1,pp%mr(ik)+1
   read(4,*) dummy_text, r_tmp, rho_tmp
   sum_rho_pp=sum_rho_pp+rho_tmp*r_tmp**2
 end do
 write(*,*) "sum(rho_pp)=",sum_rho_pp*dr
 \end{lstlisting}
-\code{rho_pp_tbl} への代入は存在しない。したがって、ファイルに密度があるにもかかわらず、
-本実装ではその情報を初期密度構築に使えない。波動関数の読み込みも行わない。
-\src{src/atom/pp/input_pp.f90}{577}
+\src{src/atom/pp/input_pp.f90}{288、343、402、498、577、614、686}
+\src{src/atom/pp/read_ps_upf_module.f90}{274、297}
 
-\subsection{波動関数からの密度生成}
-ポテンシャル・波動関数入力で、maskingなし、かつ \code{method_init_density/='wf'}
-の場合、次の蓄積を行う。
+%======================================================================
+\section{局所・非局所ポテンシャルとKB形式}\label{sec:kb}
+\subsection{KB形式と変数の対応}
+KB形式の擬ポテンシャルは次のように書ける。
 \begin{equation}
- \code{rho_pp_tbl}(i,ik)\mathrel{+}=(2\ell+1)u_\ell(i)^2.
+ \hat V_{\rm ps}=V_{\rm loc}(r)+\sum_{a}\sum_{p,m}
+ |\chi_{a,pm}\rangle\,s_p\,\langle\chi_{a,pm}|,
+ \qquad
+ \chi_{a,pm}(\mathbf r)=\sqrt{|E_p|}\,\beta_p(|\mathbf r-\mathbf R_a|)\,Y_{\ell m}(\hat{\mathbf r})
 \end{equation}
-蓄積した電子数が \code{zps} を超えると角運動量ループを終了する。
-これはファイルの占有数を忠実に読み込む処理ではなく、実装固有の蓄積・打ち切りである。
-maskingありには対応する密度生成がない。通常UPFは読み込み時に密度を設定するので、
-この波動関数からの生成には依存しない。
-\src{src/atom/pp/input_pp.f90}{1123}
-
-\subsection{初期密度方式と、波動関数がない場合}
-射影子入力では、UPF以外で \code{method_init_density} が \code{wf} または
-\code{read_dns_cube} でなければ、\code{input_pp} が次のメッセージで停止する。
-\begin{lstlisting}
-radial density is not available (method_init_density=pp...)
-\end{lstlisting}
-PSP8の場合、この制限はファイルに密度が存在しないからではなく、読み込み実装が
-利用可能な密度テーブルを保存していないことに対応する。
-\src{src/atom/pp/input_pp.f90}{92}
-
-\code{method_init_density='wf'} は、擬ポテンシャルファイルの \code{upp} を意味しない。
-Gaussianや乱数等で初期化した計算対象の軌道 \code{spsi} から密度を求める。
-したがって、原子波動関数を含まないPSP8でもこの方式は使える。
-\code{read_dns_cube} は別ファイルから密度を読み、\code{pp} / \code{pp_magdir} は
-\code{rho_pp_tbl} に基づいて密度を作る。
-\src{src/gs/initialization_dft.f90}{266}
-\src{src/gs/init_gs.f90}{40}
-
-\code{calc_density_pp} は \code{1:mr(ik)} を積分範囲として動径密度をフーリエ変換し、
-原子位置の位相を掛けて逆変換する。密度の積分範囲は \code{nrps} ではない。
-$G=0$ 成分は \code{zps} から直接設定するため、密度テーブルが0でも
-電子数成分だけは非ゼロとなり得る。
-\src{src/atom/pp/prep_density_pp.f90}{40}
-
-\section{prep\_ppにおける利用先}
-\begin{longtable}{@{}p{39mm}p{116mm}@{}}
-\toprule 処理 & 読み取りと出力\\\midrule\endhead
-\code{calc_nps/calc_jxyz} & \code{rps} 内の実空間格子点を列挙し、\code{ppg}\texttt{\%}\code{mps,jxyz,rxyz} などを構築。\\
-\code{set_lma} & \code{mlps,nproj,inorm} を参照し、無効項を除いて原子・射影子・磁気量子数に通し番号を付ける。出力は \code{ppg}\texttt{\%}\code{nlma,lma_tbl,ia_tbl}。\\
-\code{calc_uv} & \code{radnl,udvtbl} の \code{1:nrps} から初回にスプライン係数を作る。各格子点で補間し、\code{ylm(x,y,z,ll,m)} を掛けて \code{ppg}\texttt{\%}\code{uv} を構築。\code{ppg}\texttt{\%}\code{rinv_uvu=inorm*hvol}。\\
-孤立系局所項 & \code{rad} と \code{vpp_f(:,lref,ik)} を線形補間し、\code{Vpsl}\texttt{\%}\code{f} と \code{ppg}\texttt{\%}\code{Vpsl_ion} を生成。\\
-周期系局所項 & \code{rad,vloctbl,zps} と終端 \code{nrloc} で $V_{\rm loc}+Z/r$ の短距離部分を動径積分。クーロン項と原子位相を加え、逆変換して \code{Vpsl}\texttt{\%}\code{f} を生成。\\
-SO / DFT+U & 別モジュールの \code{calc_uv_so/calc_uv_plusU} に \code{pp} を渡し、\code{ppg} 側のデータを生成。\\
+$E_p$ はKB係数、$s_p=\operatorname{sgn}E_p$、$\beta_p$ は動径射影子である。
+SALMON2 は係数の大きさ $\sqrt{|E_p|}$ を射影子の側に含め、係数としては符号だけを残す。
+各量は次の変数に入る。
+\begin{longtable}{@{}P{30mm}P{66mm}P{56mm}@{}}
+\toprule KBの量 & 読み込みから最終テーブルまで & 実空間格子上\\\midrule\endhead
+局所ポテンシャル $V_{\rm loc}$ & \code{vpp(:,lref)} から、孤立系用の \code{vpp_f(:,lref,ik)} と周期系用の \code{vloctbl(:,ik)} へ & \mem{Vpsl}{f}。孤立系は \mem{ppg}{Vpsl_ion} も、周期系は \mem{ppg}{zVG_ion} を経由\\
+イオン電荷 $Z$ & \code{zps(ik)} & 周期系の $-Z/r$ 部分と \mem{ppg}{zrhoG_ion}\\
+射影子 $\beta_p$ & 射影子形式は \code{vpp(:,p)}、ポテンシャル形式は \code{vpp,upp} から作る。最終は \code{udvtbl(:,p,ik)} & \mem{ppg}{uv(j,ilma)}\\
+KB係数 $E_p$ & \code{anorm(p,ik)}。大きさは \code{udvtbl} に反映し、符号を \code{inorm(p,ik)}（$\pm1$ または0）に残す & \mem{ppg}{rinv_uvu(ilma)}$=$\code{inorm}$\times h_{\rm vol}$\\
+角運動量との対応 & \code{nproj(ll,ik)}、\code{mlps(ik)} & \mem{ppg}{lma_tbl,ia_tbl,nlma}\\
+空間範囲 & \code{rrc} から \code{rps,nrps} へ。座標は \code{radnl} & \mem{ppg}{jxyz,mps}\\
+スピン軌道 & \code{vpp_so,anorm_so} から \code{udvtbl_so,inorm_so} へ & \code{rinv_uvu_so} など（\code{prep_pp_so.f90}）\\
 \bottomrule
 \end{longtable}
-\code{dudvtbl,dvloctbl} は構築されるが、このファイルの通常の格子展開では直接参照しない。
-非局所スプライン係数は \code{udvtbl} の値から生成する。
-\src{src/atom/pp/prep_pp.f90}{372、423、555、802}
+微分テーブル \code{dvpp,dudvtbl,dvloctbl} と、\code{udvtbl} に反映された後の \code{anorm} は、
+\code{input_pp} の外からは参照されない。後段が使うのは \code{udvtbl,inorm,vloctbl,vpp_f} である。
 
-\section{実装上の注意点と確認すべき事項}
-以下は代入・分岐の追跡から確認した事項である。特定入力での数値的影響は別途実行検証を要する。
-\begin{enumerate}
-\item \textbf{作業配列と形式フラグの持ち越し。}
-\code{upp,vpp,vpp_so} は初期確保時にゼロ化されるが、元素ループ冒頭で一律リセットされない。
-\code{flag_beta_proj_is_given,flag_so} もモジュール変数で元素ごとにリセットされない。
-形式を混在させると前元素の値や分岐状態が影響し得る。「読まない情報は常に0」とはいえない。
+\subsection{vpp の列の意味}\label{sec:vpp}
+\code{vpp} の各列が何を表すかは形式によって違う。
+\begin{longtable}{@{}P{30mm}P{60mm}P{62mm}@{}}
+\toprule 項目 & ポテンシャル形式 & 射影子形式\\\midrule\endhead
+\code{vpp(:,0:mlps)} & 角運動量ごとのポテンシャル $V_\ell$ & 射影子。列番号は射影子番号 $p$ で、$\ell$ ごとに最大2本\\
+\code{lref(ik)} & \code{0:mlps} のいずれか（入力 \code{lloc_ps}） & 最後の列 \code{ubound(vpp,2)}（現在は18）\\
+\code{vpp(:,lref)} & $V_\ell$ のうち局所として選んだ列 & ファイルの局所ポテンシャル\\
+\code{anorm}（読み込み直後） & 未設定（$A_\ell$ から計算する） & ファイルのKB係数 $D_p$（符号つき）\\
+\code{upp} & 必要 & 使わない\\
+\code{mr} より外側 & 局所列を含めて $-Z/r$ で延長される & 局所列は延長されない\issue{A2}\\
+\bottomrule
+\end{longtable}
+\code{vpp} の中身はファイルの生の値とは限らない。ADPACKは射影子に半径を掛け、
+UPFはRyからHaへの換算を含む（第\ref{sec:upf_unit}節）。
 
-\item \textbf{波動関数の存在とAOテーブル。}
-通常UPFは \code{PP_CHI} を読まず、射影子から原子波動関数を復元する処理もない。
-maskingなしでは \code{upp} からAOテーブルへのコピーが実行されても、有効な原子波動関数が
-存在する保証にはならない。maskingありにはAOテーブル生成自体がない。
+\subsection{係数と射影子テーブルの作り方}\label{sec:kb_table}
+以下、$c_\ell=\sqrt{(2\ell+1)/4\pi}$ とする。
 
-\item \textbf{PAW-UPFの保存経路の不整合。}
-専用リーダは \code{PP_CHI} を \code{upp_f} に直接読むが、呼び出し元の末尾が
-\code{upp_f(:,:,ik)=upp(:,:)} と上書きする。
-また、価電子密度とコア密度は \code{paw} 側に保存され、通常の
-\code{rho_pp_tbl} や \code{rhor_nlcc} へのコピーはこの経路にはない。
-通常UPFとPAW-UPFを同じ密度利用経路として扱うことはできない。
+\textbf{ポテンシャル形式}では、$\Delta V_\ell=V_\ell-V_{\rm loc}$ として、台形則で
+\begin{equation}
+ A_\ell=\frac12\sum_i\bigl[u_i^2\Delta V_i+u_{i-1}^2\Delta V_{i-1}\bigr]\Delta r_i,
+ \qquad \code{anorm}=\sqrt{|A_\ell|},\qquad \code{inorm}=\operatorname{sgn}A_\ell
+\end{equation}
+を求める。maskingなしでは、擬波動関数を $\tilde u_\ell=c_\ell u_\ell/r^{\ell+1}$ に変換して（第\ref{sec:pswf_conv}節）
+\begin{equation}
+ \code{udvtbl}=\frac{\Delta V_\ell\,\tilde u_\ell}{\sqrt{|A_\ell|}}
+\end{equation}
+とする。これは標準のKB形式 $|\Delta V u\rangle\langle u\Delta V|/A_\ell$ に一致する。
+局所に選んだ $\ell$ のチャネルは $\Delta V=0$ で $A_\ell=0$ となり、自動的に除外される。
 
-\item \textbf{密度データ存在の検査。}
-通常UPFの読み込み用 \code{cdd} はゼロ初期化される。
-\code{PP_RHOATOM} が欠けるとゼロのままであり、初期密度方式の許可は
-実データの存在ではなく \code{ps_format='UPF'} で判定される。
+\textbf{射影子形式}では、ファイルの係数から \code{anorm}$=\sqrt{|D_p|}$、\code{inorm}$=\operatorname{sgn}D_p$ とし、
+\code{vpp} 内の射影子 $b_p$ から次のテーブルを作る。原点では \code{udvtbl(1)=udvtbl(2)} とする。
+\begin{equation}
+ \code{udvtbl}=\sqrt{|D_p|}\;b_p\,\frac{c_\ell}{r^{\ell+1}}
+\end{equation}
+つまり \code{anorm} は、ポテンシャル形式では射影子を\textbf{割り}、射影子形式では\textbf{掛ける}。
 
-\item \textbf{NLCC密度微分。}
-\code{tau_nlcc_tbl} は \code{rhor_nlcc(:,1)} に依存する。
-ADPACKと通常UPFは密度微分を読まず、共通一時配列は元素ごとに一律クリアされない。
-そのため、密度のみの入力から運動エネルギー密度が適切に構築されるとは限らない。
+どちらの形式でも、係数の絶対値が $10^{-10}$ 未満なら \code{inorm}$=0$ とする。
+\code{inorm}$=0$ の射影子は \code{set_lma} と \code{calc_uv} で除外され、\code{ppg} に入らない。
+\textbf{maskingあり}の場合は、$\Delta V u$ または射影子を一時配列 \code{uvpp} に取り、
+フィルタしてから同じ形のテーブルにする。このとき \code{anorm,inorm} は再計算しない\issue{D3}。
+\src{src/atom/pp/input_pp.f90}{145、176、957、1199、1222}
+\src{src/atom/pp/prep_pp.f90}{388、411、497、519}
 
-\item \textbf{SOとmaskingによるカットオフ更新。}
-通常成分とSO成分の両方が \code{ps_masking} を呼ぶ。
-それぞれが同じ \code{pp}\texttt{\%}\code{rps} を更新するため、SOとmaskingがともに有効な経路では
-カットオフの拡大・格子点への丸めが二度行われる。
+\subsection{非局所項の格子への展開と適用}
+\code{calc_uv} は、\code{radnl} と \code{udvtbl} の \code{1:nrps} から初回にスプライン係数を作る。
+続いて原子ごとの格子点で補間し、\code{Ylm} を掛けて \mem{ppg}{uv} を作る。
+\code{Ylm} は $\sqrt{4\pi/(2\ell+1)}\,r^\ell Y_{\ell m}$ に等しい。
+このため、\code{udvtbl} の $c_\ell/r^{\ell+1}$ と合わせて $r^{\ell}$ と規格化因子が打ち消し合い、
+$\mem{ppg}{uv}=\chi_{a,pm}(\mathbf r_j)$ となる。
+\src{src/atom/pp/prep_pp.f90}{451、501、522}
+\src{src/math/salmon_math.f90}{386}
 
-\item \textbf{maskingの表示と実処理。}
-ログには \code{anorm,inorm} が変更される旨の文言があるが、maskingルーチンには
-両者を再計算する代入がない。出力メッセージだけから再規格化を推測してはいけない。
+ハミルトニアンの作用は次の式で、\code{nonlocal_potential.f90} が3段階で計算する。
+\begin{equation}
+ (\hat V_{\rm NL}\psi)(\mathbf r_j)=\sum_{a,p,m}\chi_{a,pm}(\mathbf r_j)\;s_p\,h_{\rm vol}
+ \sum_{j'}\chi_{a,pm}(\mathbf r_{j'})\,\psi(\mathbf r_{j'})
+\end{equation}
+まず内積の和に \code{rinv_uvu} を掛けて \code{uVpsibox} に入れ、次にMPIプロセス間で和を取り、
+最後に \code{uv} を掛けて \code{htpsi} に加える。
+\src{src/common/nonlocal_potential.f90}{75、90、105}
 
-\item \textbf{未使用メンバと有効範囲。}
-\code{vpp_f_so} は宣言のみ、\code{dupptbl_ao} は確保・ゼロ化のみである。
-また、配列の確保長と意味のある値が書き込まれた範囲は一致しない。
-\code{mr,nrps,nrloc} と形式別のループ範囲を合わせて判断する必要がある。
-\end{enumerate}
-\src{src/atom/pp/read_paw_upf_module.f90}{140}
-\src{src/atom/pp/input_pp.f90}{20、234、1018、1302}
+\subsection{局所項の格子への展開}\label{sec:local}
+\textbf{孤立系}では、格子点ごとに二分探索で動径区間を求め、\code{vpp_f(:,lref,ik)} を線形補間して
+\mem{Vpsl}{f} と \mem{ppg}{Vpsl_ion} に入れる。参照範囲は \code{nrmax} までである。
+\src{src/atom/pp/prep_pp.f90}{605}
 
-\section{再読時の要点}
+\textbf{周期系}では、短距離部分 $V_{\rm loc}+Z/r$ を \code{vloctbl} から動径積分する。
+区間の中点を $\bar r_i$、区間平均を $\bar V_i$ とすると、次のようになる。
+\begin{align}
+ \tilde V^{\rm sr}_k(G)&=\sum_{i=2}^{n_{\rm loc}}4\pi\,\frac{\sin(G\bar r_i)}{G}
+   \bigl(\bar r_i\bar V_i+Z_k\bigr)\Delta r_i\quad(G\neq0),\\
+ \tilde V^{\rm sr}_k(0)&=\sum_{i=2}^{n_{\rm loc}}4\pi\,\bigl(\bar r_i^{\,2}\bar V_i+\bar r_iZ_k\bigr)\Delta r_i
+\end{align}
+これを \mem{ppg}{zVG_ion} に入れ、原子ごとの位相とクーロン項 $4\pi Z/G^2$（\mem{fg}{coef}、$G=0$ では0）を加える。
+\begin{equation}
+ \tilde V_{\rm ion}(\mathbf G)=\frac1\Omega\sum_a\Bigl[\tilde V^{\rm sr}_{k(a)}(G)-\frac{4\pi Z_{k(a)}}{G^2}\Bigr]e^{-i\mathbf G\cdot\mathbf R_a}
+\end{equation}
+これを逆変換して \mem{Vpsl}{f} を得る。同じループで、イオンの点電荷密度 \mem{ppg}{zrhoG_ion} も作る。
+積分の終端 $n_{\rm loc}$ は \code{nrloc}（masking前の \code{nrps}）である\issue{A5}。
+\code{vloctbl} が書かれる範囲は、ポテンシャル形式では \code{1:nrps}、射影子形式では \code{1:mr} である。
+\src{src/atom/pp/prep_pp.f90}{712、770}
+\src{src/common/initialization.f90}{720}
+
+\subsection{UPFの単位換算と $D_{ij}$}\label{sec:upf_unit}
+UPFのエネルギー単位はRyで、読み込み時にHaへ換算する。
+射影子に $\sqrt{0.5}$、局所ポテンシャルに $0.5$ を掛け、$D_{ij}$ はRyのまま \code{anorm} に入れる。
+射影子2本の積で $0.5D$ となるので、全体では整合している。
+ただし $D_{ij}$ を使うのは対角成分だけの場合に限られ、\code{anorm(l)=Dij(l,l)} とする\issue{A1}。
+\src{src/atom/pp/read_ps_upf_module.f90}{251、366、382}
+
+%======================================================================
+\section{初期密度の生成}\label{sec:density}
+\subsection{初期密度方式}
+新規計算では、\code{init_wf} で軌道を初期化した後、\code{method_init_density} に応じて初期密度を作る。
+\begin{longtable}{@{}P{32mm}P{123mm}@{}}
+\toprule 方式 & 処理\\\midrule\endhead
+\code{pp}、\code{pp_magdir} & \code{calc_density_pp} が原子の動径密度 \code{rho_pp_tbl} を重ね合わせる。\\
+\code{read_dns_cube} & 別ファイルから密度を読む。\\
+\code{wf}（その他） & \code{calc_density} が、ガウス関数や乱数で初期化した計算対象の軌道 \code{spsi} から密度を作る。擬ポテンシャルの擬波動関数 \code{upp} は使わない。\\
+\bottomrule
+\end{longtable}
+結果はスピン別密度 \code{rho_s} に入り、全密度 \code{rho} に足されて、Hartreeと交換相関ポテンシャルの初期値になる。
+\code{wf} は擬波動関数を必要としないので、PSP8のようにそれを含まない形式でも使える。
+\src{src/gs/initialization_dft.f90}{274、286}
+
+\subsection{calc\_density\_pp の入力}
+\code{pp} から参照するのは次の4メンバだけである。
+\begin{longtable}{@{}P{30mm}P{125mm}@{}}
+\toprule メンバ & 使われ方\\\midrule\endhead
+\code{rho_pp_tbl(i,ik)} & 動径密度 $n_k(r_i)=4\pi r_i^2\rho(r_i)$。$\sum_i n_k\Delta r_i$ が電子数に当たる。密度の形を決める\textbf{唯一の量}。\\
+\code{rad(i,ik)} & $Gr$ の計算と積分幅 \code{rad(i+1)-rad(i)} に使う。\\
+\code{mr(ik)} & 積分の上限。\code{nrps} ではない。\\
+\code{zps(ik)} & $G=0$ 成分、総電子数、\code{pp_magdir} のスピン配分に使う。\\
+\bottomrule
+\end{longtable}
+\code{upp}、\code{rho_nlcc_tbl}、\code{rps}、PAW-UPFの \mem{paw}{rhops} は参照しない。
+\code{pp} 以外では次を使う。
 \begin{itemize}
-\item 容量は \code{lmax/lmax0/nrmax/nrmax0}、入力由来の範囲は \code{mr}、
-非局所有効範囲は \code{nrps}、実空間格子点数は \code{ppg}\texttt{\%}\code{mps/nps} と区別する。
-\item \code{input_pp} が元素別動径情報を構築し、\code{prep_pp} はそれを読む。
-\item \code{vpp} は形式によってポテンシャルにも射影子にもなる。
-\item ファイルに含まれる情報、リーダが読む情報、保存される情報、後段が利用する情報を分ける。
-PSP8の価電子密度はこの区別が必要な代表例である。
-\item 初期密度方式 \code{wf} は計算対象の軌道からの密度生成であり、原子波動関数 \code{upp} の使用ではない。
+\item \code{system}：原子座標 \code{Rion}、セル体積 \code{det_A}、\code{nspin}、\code{ngrid}
+\item \code{kion}：原子から元素番号への対応
+\item \code{fg}：逆格子ベクトル \code{vec_G} と、逆変換の位相行列
+\item \code{info}：担当する原子の範囲と通信子
+\item \code{magdir_atom}：\code{pp_magdir} での原子ごとの磁化
+\end{itemize}
+\code{poisson} の \code{ff1x} や \code{a_ffte} などは作業領域として借りて上書きする。
+\src{src/atom/pp/prep_density_pp.f90}{10}
+
+\subsection{処理手順}
+$\Omega$ をセル体積、$Z_k=\code{zps(ik)}$、$N=\sum_aZ_{k(a)}$ とする。
+\begin{enumerate}
+\item \textbf{動径密度のフーリエ変換。}全元素について、プロセスが持つ $\mathbf G$ ごとに次を計算し、\code{zrhoG} に入れる。
+\begin{equation}
+ \tilde n_k(G)=\frac{1}{\Omega}\sum_{i=1}^{\code{mr}} n_k(r_i)\,\frac{\sin(Gr_i)}{Gr_i}\,(r_{i+1}-r_i)\quad(G\neq0),
+ \qquad \tilde n_k(0)=\frac{Z_k}{\Omega}
+\end{equation}
+球対称な関数のフーリエ変換 $\int\rho\,e^{-i\mathbf G\cdot\mathbf r}d^3r=\int 4\pi r^2\rho\,j_0(Gr)\,dr$ を、左端点の矩形則で計算している。
+$Gr<0.1$ では $\sin x/x$ をテイラー展開で評価する。
+\textbf{$G=0$ 成分は積分せず \code{zps} で与える}ので、テーブルの規格化は検査されない。
+
+\item \textbf{スピン配分。}係数 $c_{a\sigma}$ を、\code{nspin=1} なら1、\code{nspin=2} の \code{pp} なら0.5とする。
+\code{pp_magdir} では、$m_a=\code{magdir_atom(ia)}$\issue{D2} の符号に応じて $|m_a|$ を上向きまたは下向きに割り当てる。
+残りの電子 $N-\sum|m_a|$ は $Z_{k(a)}/N$ に比例して両スピンに等分する。
+$\sum|m_a|\ge N$ の場合は、総和が $N$ になるように縮める。
+最後に $Z_{k(a)}$ で割り、$G=0$ 成分がスピン $\sigma$ に割り当てた電子数を表すようにする。
+\code{nspin=1} では \code{pp_magdir} でも配分しない。
+
+\item \textbf{構造因子と逆変換。}担当原子について $\tilde\rho_\sigma(\mathbf G)=\sum_ac_{a\sigma}\tilde n_{k(a)}(G)e^{-i\mathbf G\cdot\mathbf R_a}$ を足し、
+プロセス間で和を取り、実空間へ戻す。
+\code{yn_ffte='n'} では位相行列 \code{egx,egy,egz} との積和、\code{'y'} では \code{PZFFT3DV_MOD} を使う。
+
+\item \textbf{後処理。}\code{sym_rho} で対称化し、負の値を0にする。
+プロセスごとの総和が変わらないよう全体を定数倍し、\code{calc_density_pp: Int(rho)=} を出力する。
+\end{enumerate}
+結果は、各原子に球対称な密度を置いて重ね合わせたものである。
+ただし $G=0$ 成分だけは、テーブルの積分値ではなく \code{zps} で決まる。
+\src{src/atom/pp/prep_density_pp.f90}{33、41、72、104、133}
+
+\subsection{rho\_pp\_tbl が書かれる経路}\label{sec:rho_pp_tbl}
+\code{rho_pp_tbl} は \code{init_pp} で0に初期化される。その後に値を書くのは次の2か所だけである。
+\begin{itemize}
+\item 通常UPFの読み込み：\code{PP_RHOATOM} を読んだ \code{cdd} をコピーする。
+\item \code{making_ps_without_masking}：ポテンシャル形式で、maskingなし、かつ方式が \code{wf} 以外のとき、
+擬波動関数から $\sum_\ell(2\ell+1)u_\ell^2$ を足し込む。足した電子数が \code{zps} を超えたら打ち切る。
+これはファイルの占有数に基づく処理ではない。
+また、\code{upp(i)} を \code{rho_pp_tbl(i)} に入れるため、動径座標が1点ずれる\issue{A8}。
+\end{itemize}
+その結果、形式と条件によって次のようになる。
+\begin{longtable}{@{}P{55mm}P{45mm}P{52mm}@{}}
+\toprule 形式・条件 & \code{rho_pp_tbl} & \code{pp} 方式での結果\\\midrule\endhead
+通常UPF & \code{PP_RHOATOM} の値 & 正常。タグがなければ0\\
+ポテンシャル形式、maskingなし & 擬波動関数から生成 & 正常\\
+ポテンシャル形式、maskingあり & 0 & 一様密度\issue{A3}\\
+PSP8、ADPACK & 0 & 停止\\
+PAW-UPF & 0（密度は \mem{paw}{rhops} のみ） & 一様密度\issue{A3}\\
+\bottomrule
+\end{longtable}
+停止するのは次の3条件がすべてそろったときで、\code{input_pp} が
+\code{radial density is not available} を出して止まる。
+\begin{itemize}
+\item 射影子形式である（\code{flag_beta_proj_is_given} が真）。
+\item \code{ps_format} が \code{UPF} でない。
+\item 方式が \code{wf} でも \code{read_dns_cube} でもない。
+\end{itemize}
+この判定は形式名だけを見ており、テーブルに実際に値があるかは確かめない\issue{D1}。
+\src{src/atom/pp/input_pp.f90}{92、1123}
+\src{src/atom/pp/read_ps_upf_module.f90}{132、388、429}
+
+%======================================================================
+\section{擬波動関数と類似変数}\label{sec:pswf}
+\subsection{5つの変数の違い}
+擬波動関数（原子の動径波動関数 $u_\ell$）に関係するメンバは5つある。
+名前は似ているが、寿命、中身、使われる場所が異なる。
+\begin{longtable}{@{}P{20mm}P{48mm}P{44mm}P{36mm}@{}}
+\toprule 変数 & 寿命・形状 & 中身 & 使われる場所\\\midrule\endhead
+\code{upp} & 作業配列 \code{(0:nrmax0,p)}。元素ごとに使い回し、リセットしない。ルートプロセスのみ & 生の $u_\ell$。maskingなしでは途中で変換後の値に\textbf{上書き}される & \code{input_pp} 内。射影子、係数、\code{rho_pp_tbl} の材料\\
+\code{dupp} & 作業配列。ルートプロセスのみ & 変換後の \code{upp} の微分。maskingなしのときだけ計算 & \code{dudvtbl} の計算だけ\\
+\code{upp_f} & 元素別 \code{(0:nrmax0,p,ik)}。broadcastされる & 各元素の最後の時点の \code{upp} の全体コピー & PDOS（\code{write_pdos}）だけ\\
+\code{upptbl_ao} & 元素別 \code{(nrmax,p,ik)}。broadcastされる & 変換後の \code{upp(0:mr-1)}。maskingなしのときだけ & DFT+U（\code{calc_uv_plusU}）だけ\\
+\code{dupptbl_ao} & 元素別。確保時に0 & 書き込みなし & 使われない\\
+\bottomrule
+\end{longtable}
+ポテンシャル形式では \code{nproj=1} なので、第2添字 $p$ は $\ell$ に一致する。
+名前の \code{_f} は元素ごとの最終保存を、\code{tbl_ao} はDFT+U用の原子軌道テーブルを表すと読める。
+\src{src/atom/pp/input_pp.f90}{234、1146、1157、1172}
+\src{src/atom/pp/salmon_pp.f90}{261、275}
+
+\subsection{値が入る条件}
+擬波動関数をファイルから読むのはポテンシャル形式だけである
+（KY 314行、ABINIT 388行、ABINITFHI 446行、FHI 646行）。
+\begin{longtable}{@{}P{44mm}P{29mm}P{25mm}P{50mm}@{}}
+\toprule 形式・条件 & \code{upp_f} & \code{upptbl_ao} & PDOS / DFT+U\\\midrule\endhead
+ポテンシャル形式、maskingなし & 変換後の $u_\ell$ & 変換後の $u_\ell$ & どちらも動く。PDOSには注意点あり\issue{B1}\issue{B2}\\
+ポテンシャル形式、maskingあり & 生の $u_\ell$ & 0 & PDOSは動く。DFT+Uは射影子が0\issue{A4}\\
+射影子形式（PSP8、ADPACK、UPF、PAW-UPF） & 0 & 0 & PDOSは何もせず終了。DFT+Uは射影子が0\issue{A4}\\
+\bottomrule
+\end{longtable}
+表の0は、前の元素の値が残らない場合である\issue{C2}。
+
+擬波動関数は、PDOSとDFT+Uのほかに、ポテンシャル形式では射影子 \code{udvtbl} の材料として計算結果に直接効く。
+一方、\code{upp_f} と \code{upptbl_ao} は、SCF、時間発展、\code{wf} 方式の初期密度では参照されない。
+
+\subsection{maskingなしでの変換}\label{sec:pswf_conv}
+maskingなしでは、\code{upp} 自体を次の形に書き換える（1146行、$r_i=\code{rad(i+1)}$）。
+\begin{equation}
+ \tilde u_\ell(r_i)=u_\ell(r_i)\,\frac{c_\ell}{r_i^{\ell+1}},\qquad \code{upp(0,l)}=\code{upp(1,l)}
+\end{equation}
+その後の \code{dupp,upp_f,upptbl_ao} は、すべて変換後の値を持つ。
+maskingありでは \code{upp} を書き換えないので、\code{upp_f} の中身は \code{yn_psmask} によって変わる。
+
+\subsection{PDOSでの利用}
+\code{yn_out_pdos='y'} のとき、基底状態計算の最後に \code{write_pdos} が呼ばれる。
+MD側の呼び出しはコメントアウトされている。
+まず \code{all(upp_f==0)} なら \code{Pseudoatom wave function is not available} を出して戻る。
+そうでなければ、各原子・$L$・$m$ について格子点ごとに \code{upp_f} を線形補間し、
+KS軌道 $\psi$ との射影 $P_{a,Lm}$ を計算する。
+\begin{equation}
+ \phi_a(r)=\frac{u_{\rm ref}(r)}{r^{\ell_{\rm ref}+1}}\sqrt{\frac{2\ell_{\rm ref}+1}{4\pi}},\qquad
+ P_{a,Lm}=h_{\rm vol}\sum_{\mathbf r}\psi(\mathbf r)\,\phi_a(r)\,Y_{Lm}(\hat{\mathbf r})
+\end{equation}
+ここで $u_{\rm ref}$ は \code{upp_f(:,lref(ik),ik)} である。
+動径関数がすべての $L$ で \code{lref} の列に固定されている点\issue{B1}と、
+maskingなしで変換が二重になる点\issue{B2}に注意が要る。
+\src{src/io/write.f90}{1726、1776}
+\src{src/gs/main_dft.f90}{328}
+
+\subsection{DFT+Uでの利用}\label{sec:pswf_plusu}
+DFT+Uは入力ファイルのキーワードではなく、実行ディレクトリの \code{hubbard_param.dat} で有効になる。
+このファイルがあり、先頭の値が真なら \code{PLUS_U_ON} が真になり、\code{prep_pp.f90} から \code{calc_uv_plusU} が呼ばれる。
+\code{calc_uv_plusU} は \code{rad(1:nrps_ao)} を節点として \code{upptbl_ao} を3次スプラインで補間し、
+\code{ylm} を掛けて原子軌道 \mem{ppg}{phi_ao} を作る。
+
+原子軌道の範囲 \code{rps_ao,nrps_ao} は、非局所カットオフ \code{rps,nrps} のコピーである。
+\code{upp} の非ゼロ範囲から決める処理はあるが、代入行がコメントアウトされている（140--141行）。
+つまり範囲は波動関数の実際の広がりでは決まらない。
+\src{src/plusu/plusu_global.f90}{74}
+\src{src/plusu/prep_pp_plusu.f90}{197、250}
+\src{src/atom/pp/input_pp.f90}{126、142}
+
+%======================================================================
+\clearpage
+\section{要確認事項}\label{sec:issues}
+コードの追跡から見つかった、結果に影響し得る点や検査の抜けをまとめる。
+いずれも静的な解析によるもので、実行による確認はしていない。
+番号は本文中の〔要確認〕と対応する。
+
+\subsection*{A. 計算結果に影響し得るもの}
+\begin{longtable}{@{}P{8mm}P{52mm}P{92mm}@{}}
+\toprule & 内容と発生条件 & 根拠と影響\\\midrule\endhead
+A1 & 非対角成分を持つ $D_{ij}$ のUPF（多参照） & 非対角成分があると \code{anorm} を設定せず、\code{Dij} も使わずに解放する（\code{read_ps_upf_module.f90:251-261, 504}）。全射影子が \code{inorm=0} で除外され、\textbf{非局所項が入らない}可能性がある。警告はない。\\
+A2 & 射影子形式、孤立系、ファイルの動径範囲より外に格子点がある場合 & $-Z/r$ の延長は列 \code{0:mlps} だけが対象で、局所列（18）は延長されない。各読み込みルーチンが延長するのは \code{rad} だけである。孤立系の補間は \code{nrmax} まで参照するので、\textbf{外側で $V_{\rm loc}=0$} になる可能性がある（\code{input_pp.f90:105}）。ファイルの動径格子が短いほど起こりやすい。\\
+A3 & \code{pp} 方式で \code{rho_pp_tbl}$=0$（ポテンシャル形式＋masking、PAW-UPF、\code{PP_RHOATOM} のないUPF） & $G\neq0$ 成分がすべて0となり、\textbf{一様密度からSCFを始める}。$G=0$ は \code{zps} で決まるので、ログの \code{Int(rho)} は正常に見える。影響は初期値に限られるが、収束に効く。\\
+A4 & DFT+U を射影子形式、またはmaskingありで使う場合 & \code{upptbl_ao}$=0$ から \code{phi_ao}$=0$ となり、\textbf{+U項が効かない}。\code{prep_pp_plusu.f90} に検査は見当たらない。\\
+A5 & 周期系の局所項 & 積分を非局所カットオフ \code{nrloc} で打ち切るので、その外側で $V_{\rm loc}=-Z/r$ と仮定している。局所ポテンシャルの収束半径がより大きい擬ポテンシャルでは近似になる。\\
+A6 & スピン軌道とmaskingを同時に使う場合 & 通常成分とSO成分の両方が \code{ps_masking} を呼び、同じ \mem{pp}{rps} を二度拡大して格子点に丸める。\\
+A7 & NLCCを持つADPACK、通常UPF & 密度の微分を読まず、共通の一時配列も元素ごとにクリアしないので、\code{tau_nlcc_tbl} が適切に作られるとは限らない。\\
+A8 & \code{pp} 方式で、ポテンシャル形式（maskingなし）から \code{rho_pp_tbl} を生成する場合 & 動径座標が\textbf{格子1点分ずれる}。生成側は \code{rho_pp_tbl(i)} に \code{upp(i)}$^2$ を入れるが、\code{upp(i)} は \code{rad(i+1)} の位置の値である（\code{input_pp.f90:1128}、第\ref{sec:index}節）。一方 \code{calc_density_pp} は \code{rho_pp_tbl(i)} を \code{rad(i)} の位置の値として扱う（\code{prep_density_pp.f90:55, 64}）。動径密度が内側へ格子1点分ずれて重ね合わされる。ログの \code{Int(rho)} は生成側と同じ重みで積分するので、このずれは現れない。影響の大きさは動径格子の間隔による。通常UPFは、\code{rho_pp_tbl(i)} と \code{rad(i)} が対応するので該当しない。\\
+\bottomrule
+\end{longtable}
+
+\subsection*{B. 解析出力（PDOS）に影響するもの}
+\begin{longtable}{@{}P{8mm}P{52mm}P{92mm}@{}}
+\toprule & 内容 & 根拠と影響\\\midrule\endhead
+B1 & 動径関数が \code{lref} の列に固定 & $Y_{Lm}$ だけが $L$ で変わり、動径関数と因子はすべての $L$ で \code{lref} のものを使う（\code{write.f90:1776}）。$\ell$ ごとの射影にはなっていない。\\
+B2 & maskingなしで変換が二重 & \code{upp_f} は変換済みなのに、同じ因子 $c_\ell/r^{\ell+1}$ をもう一度掛ける。動径関数の形が \code{yn_psmask} で変わる。\\
+B3 & ゼロ判定が全元素まとめて & \code{all(upp_f==0)} は元素ごとではない。ポテンシャル形式と射影子形式を混ぜると、擬波動関数のない元素の寄与が0のまま、メッセージも出ない。\\
+\bottomrule
+\end{longtable}
+
+\subsection*{C. 形式を混在させたときの持ち越し}
+作業配列とフラグの一部が元素ごとにリセットされないため、前の元素の状態が次の元素に影響する。
+\begin{longtable}{@{}P{8mm}P{52mm}P{92mm}@{}}
+\toprule & 内容 & 根拠と影響\\\midrule\endhead
+C1 & \code{flag_beta_proj_is_given} & 一度真になると戻らない。UPFの後にポテンシャル形式の元素があると、\code{pp} 方式では、密度を作れる元素でも停止条件にかかる。元素の順序を逆にすると起きない。\\
+C2 & \code{upp} & ルートで元素ごとに使い回し、\code{mr+1:} 以外はリセットしない。\code{upp} の変換と \code{upptbl_ao}、\code{upp_f} へのコピーは形式の判定の外にある（1143--1161行、234行）。ポテンシャル形式の後に射影子形式の元素を読むと、前の元素の $u_\ell$ が入り得る。\\
+C3 & \code{flag_so}、\code{vpp,vpp_so}、NLCCの一時配列 & 同様に元素ごとにリセットされない。\\
+C4 & PAW-UPFの \code{PP_CHI} & 専用リーダが \code{upp_f} に読むが、呼び出し元の \code{upp_f(:,:,ik)=upp(:,:)}（234行）で上書きされる。密度も \code{paw} 側にしか保存されず、通常UPFとは経路が違う。\\
+\bottomrule
+\end{longtable}
+
+\subsection*{D. 検査・表示・保守性}
+\begin{longtable}{@{}P{8mm}P{52mm}P{92mm}@{}}
+\toprule & 内容 & 根拠と影響\\\midrule\endhead
+D1 & 初期密度の停止判定が形式名だけ & \code{ps_format='UPF'} なら通過するので、PAW-UPFや \code{PP_RHOATOM} のないUPFは検査を素通りする（A3の原因）。\\
+D2 & \code{magdir_atom(100)} & 固定長100で宣言されている。\code{pp_magdir} で100原子を超えると範囲外を参照する（\code{salmon_global.f90:171}）。\\
+D3 & maskingのログ & \code{anorm,inorm} が変更されると表示するが、再計算する代入はない。\\
+D4 & 使われない変数 & \code{vpp_f_so}（宣言のみ）、\code{dupptbl_ao}（ゼロ化のみ）、\code{dudvtbl,dvloctbl}（\code{input_pp} の外で参照なし）。\code{rps_ao} を決める走査結果の代入もコメントアウトされている。\\
+D5 & PSP8の価電子密度 & ファイルにあるが保存されない。そのため \code{pp} 方式が使えない。\\
+\bottomrule
+\end{longtable}
+
+%======================================================================
+\section{まとめ}
+\begin{itemize}
+\item \textbf{範囲の区別。}容量は \code{lmax,lmax0,nrmax,nrmax0}、入力データの範囲は \code{mr}、
+非局所の有効範囲は \code{nrps}、実空間の格子点数は \mem{ppg}{mps,nps} である。
+\item \textbf{処理の分担。}\code{input_pp} が元素別の動径テーブルを作り、\code{prep_pp} はそれを読むだけである。
+\item \textbf{KB形式との対応。}局所は \code{vpp(:,lref)} から \code{vpp_f}（孤立系）と \code{vloctbl}（周期系）へ入る。
+射影子は \code{udvtbl} に、係数の符号は \code{inorm} に入る。
+格子上では \mem{ppg}{uv} と \mem{ppg}{rinv_uvu} になる。
+\code{anorm} はポテンシャル形式では割り、射影子形式では掛ける。
+\item \textbf{vpp の意味。}形式によってポテンシャルにも射影子にもなり、局所列の位置も違う。
+\item \textbf{擬波動関数。}ファイルから読むのはポテンシャル形式だけである。
+\code{upp,dupp} は作業配列、\code{upp_f} はPDOS用、\code{upptbl_ao} はDFT+U用、\code{dupptbl_ao} は未使用である。
+\item \textbf{初期密度。}\code{pp} 方式が使うのは \code{rho_pp_tbl} だけである。
+\code{wf} 方式は擬波動関数を使わない。
+\item \textbf{保存と利用の区別。}ファイルにある情報、読まれる情報、保存される情報、後段で使われる情報は一致しない。
+必要な情報がないときに停止も警告もしない経路があり、第\ref{sec:issues}節のA1--A4は実際に確かめることを勧める。A8は影響が小さいと考えられるが、生成処理の修正候補である。
 \end{itemize}
 
 \appendix
 \section{コンパイル方法}
-up\LaTeX{} とdvipdfmxを用いる。目次・相互参照のため2回コンパイルする。
+up\LaTeX{} とdvipdfmxを使う。目次、相互参照、長い表の幅を確定させるため、3回コンパイルする。
 \begin{lstlisting}
+uplatex -interaction=nonstopmode -halt-on-error report_pp.tex
 uplatex -interaction=nonstopmode -halt-on-error report_pp.tex
 uplatex -interaction=nonstopmode -halt-on-error report_pp.tex
 dvipdfmx report_pp.dvi
