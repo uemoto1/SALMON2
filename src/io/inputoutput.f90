@@ -1046,7 +1046,7 @@ contains
     gauge_sbe = 'velocity_gauge'
     t_2 = -1.d0
     am_s = 4
-    dbg_sbe_fast = 0
+    dbg_sbe_fast(:) = 0
 !! == default for &dc
     num_fragment = 0
     num_rgrid_buffer = 0
@@ -2722,7 +2722,7 @@ contains
       write(fh_variables_log, '("#",4X,A,"=",A)') 'gauge_sbe', gauge_sbe
       write(fh_variables_log, '("#",4X,A,"=",ES12.5)') 't_2', t_2
       write(fh_variables_log, '("#",4X,A,"=",I6)') 'am_s', am_s
-      write(fh_variables_log, '("#",4X,A,"=",I6)') 'dbg_sbe_fast', dbg_sbe_fast
+      write(fh_variables_log, '("#",4X,A,"=",9I6)') 'dbg_sbe_fast(1:9)', dbg_sbe_fast(1:9)
       
       if(inml_dc >0)ierr_nml = ierr_nml +1
       write(fh_variables_log, '("#namelist: ",A,", status=",I3)') 'dc', inml_dc
