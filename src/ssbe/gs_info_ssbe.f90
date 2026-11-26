@@ -37,7 +37,7 @@ subroutine init_sbe_gs_info(gs, sysname, gs_directory, nk, nb, ne, a1, a2, a3, r
     use communication
     use filesystem, only: open_filehandle, get_filehandle
     use common_ssbe, only: grad_k_array_nb1d_double
-    use salmon_global, only: gauge_sbe
+    use salmon_global, only: gauge_sbe, dbg_sbe_fast
     implicit none
     type(s_sbe_gs_info), intent(inout) :: gs
     character(*), intent(in) :: sysname
@@ -87,8 +87,10 @@ subroutine init_sbe_gs_info(gs, sysname, gs_directory, nk, nb, ne, a1, a2, a3, r
             write(*, '(a)') "# read_tm_data"
             call read_tm_data()
             !Export all data from binray
-            write(*, '(a)') "# save_sbe_gs_bin"
-            call save_sbe_gs_bin()
+            if (dbg_sbe_fast(1) == 1) then
+                write(*, '(a)') "# save_sbe_gs_bin"
+                call save_sbe_gs_bin()
+            end if
         end if
     end if
 
@@ -245,32 +247,32 @@ contains
     subroutine read_sbe_gs_bin()
         implicit none
         integer :: fh
-        ! fh = get_filehandle()
-        ! open(fh, file=trim(gs_directory) // trim(sysname) // '_sbe_gs.bin', form='unformatted', status='old')
-        ! read(fh) gs%kpoint
-        ! read(fh) gs%kweight
-        ! read(fh) gs%eigen
-        ! read(fh) gs%p_mod_matrix
-        ! read(fh) gs%rvnl_tm_matrix
-        ! ! read(fh) gs%prod_dk
-        ! close(fh)
-        ! return
+        fh = get_filehandle()
+        open(fh, file=trim(gs_directory) // trim(sysname) // '_sbe_gs.bin', form='unformatted', status='old')
+        read(fh) gs%kpoint
+        read(fh) gs%kweight
+        read(fh) gs%eigen
+        read(fh) gs%p_tm_matrix
+        read(fh) gs%rvnl_tm_matrix
+        ! read(fh) gs%prod_dk
+        close(fh)
+        return
     end subroutine read_sbe_gs_bin
 
 
     subroutine save_sbe_gs_bin()
         implicit none
         integer :: fh
-        ! fh = get_filehandle()
-        ! open(fh, file=trim(gs_directory) // trim(sysname) // '_sbe_gs.bin', form='unformatted', status='replace')
-        ! write(fh) gs%kpoint
-        ! write(fh) gs%kweight
-        ! write(fh) gs%eigen
-        ! write(fh) gs%p_mod_matrix
-        ! write(fh) gs%rvnl_tm_matrix
-        ! ! write(fh) gs%prod_dk
-        ! close(fh)
-        ! return
+        fh = get_filehandle()
+        open(fh, file=trim(gs_directory) // trim(sysname) // '_sbe_gs.bin', form='unformatted', status='replace')
+        write(fh) gs%kpoint
+        write(fh) gs%kweight
+        write(fh) gs%eigen
+        write(fh) gs%p_tm_matrix
+        write(fh) gs%rvnl_tm_matrix
+        ! write(fh) gs%prod_dk
+        close(fh)
+        return
     end subroutine save_sbe_gs_bin
 
 

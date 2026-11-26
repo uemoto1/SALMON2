@@ -34,7 +34,7 @@ subroutine main_realtime_ssbe(icomm)
     call init_sbe_gs_info(gs, sysname, base_directory, &
         & nk, nstate, nelec, &
         & al_vec1, al_vec2, al_vec3, &
-        & .false., icomm)        
+        & (dbg_sbe_fast(1) == 2), icomm)
     
     ! Initialization of SBE solver and density matrix:
     call init_sbe_bloch_solver(sbe, gs, nstate_sbe(1), icomm)

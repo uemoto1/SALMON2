@@ -105,7 +105,7 @@ subroutine main_multiscale_ssbe(icomm)
           call init_sbe_gs_info(gs(i), sysname_sbe(i), base_directory, &
               & nk_sbe(i), nstate_sbe(i), nelec_sbe(i), &
               & al_vec1_sbe(:,i), al_vec2_sbe(:,i), al_vec3_sbe(:,i), &
-              & .false., icomm)
+              & (dbg_sbe_fast(1) == 2), icomm)
         end do
 
         ! Distribute
