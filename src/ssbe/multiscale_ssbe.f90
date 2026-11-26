@@ -43,6 +43,7 @@ subroutine main_multiscale_ssbe(icomm)
 
 
     integer :: fh_sbe_wave
+    integer :: fh_macro_coord
     integer, allocatable :: fh_sbe_obs(:)
     integer, allocatable :: fh_sbe_rt(:)
     integer, allocatable :: fh_sbe_rt_energy(:)
@@ -136,6 +137,14 @@ subroutine main_multiscale_ssbe(icomm)
     call comm_sync_all(icomm)
 
     if (irank == 0) then
+        fh_macro_coord = get_filehandle()
+        open(unit=fh_macro_coord, file="itbl_macro_coord.txt", action="write")
+        write(fh_macro_coord, "(a)") "# imacro ix iy iz"
+        do imacro = 1, nmacro
+            write(fh_macro_coord, "(4i9)") imacro, itbl_macro_coord(1:3, imacro)
+        end do
+        close(fh_macro_coord)
+
         write(tmp, "(a,a,a,a)") "mkdir ", trim(base_directory), trim(sysname), "_sbe_RT_Ac"
         call system(trim(tmp))
         write(tmp, "(a,a,a,a)") "mkdir ", trim(base_directory), trim(sysname), "_sbe_m"
