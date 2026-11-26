@@ -248,7 +248,11 @@ subroutine main_multiscale_ssbe(icomm)
 
         if (irank == 0) then
             if (mod(it, out_ms_step) == 0) then
-                call write_Ac_field(it, fs, fw)
+                if (dbg_sbe_fast(2) == 1) then
+                    call write_Ac_field_bin(it, fs, fw)
+                else
+                    call write_Ac_field(it, fs, fw)
+                end if
             end if
             if (mod(it, 10) == 0) then
                 write(*, "(a,i6)") "Time step = ", it
@@ -511,6 +515,43 @@ subroutine write_Ac_field(iit, fs, fw)
     close(fh)
     return
 end subroutine write_Ac_field
+
+
+! Binary version of write_Ac_field (enabled by dbg_sbe_fast(2) == 1)
+subroutine write_Ac_field_bin(iit, fs, fw)
+    use fdtd_weyl, only: s_fdtd_system, ls_fdtd_weyl
+    use filesystem
+    use salmon_global
+    implicit none
+    integer, intent(in) :: iit
+    type(s_fdtd_system), intent(in) :: fs
+    type(ls_fdtd_weyl), intent(in) :: fw
+    character(256) :: file_Ac_data
+    integer :: ix1, ix2, iy1, iy2, iz1, iz2
+    integer :: fh
+
+    iz1 = max(fs%mg%is(3), out_ms_region_iz_m(1))
+    iz2 = min(fs%mg%ie(3), out_ms_region_iz_m(2))
+    iy1 = max(fs%mg%is(2), out_ms_region_iy_m(1))
+    iy2 = min(fs%mg%ie(2), out_ms_region_iy_m(2))
+    ix1 = max(fs%mg%is(1), out_ms_region_ix_m(1))
+    ix2 = min(fs%mg%ie(1), out_ms_region_ix_m(2))
+
+    write(file_Ac_data, "(a,a,a,a,i6.6,a)") trim(sysname), "_sbe_RT_Ac/", trim(sysname), "_Ac_", iit, ".bin"
+    fh = get_filehandle()
+    open(unit=fh, file=trim(file_Ac_data), form="unformatted", status="replace", action="write")
+    write(fh) ix1, ix2
+    write(fh) iy1, iy2
+    write(fh) iz1, iz2
+    write(fh) fw%vec_Ac%v(:, ix1:ix2, iy1:iy2, iz1:iz2)
+    write(fh) fw%vec_e%v(:, ix1:ix2, iy1:iy2, iz1:iz2)
+    write(fh) fw%vec_h%v(:, ix1:ix2, iy1:iy2, iz1:iz2)
+    write(fh) fw%vec_j_em%v(:, ix1:ix2, iy1:iy2, iz1:iz2)
+    write(fh) fw%edensity_emfield%f(ix1:ix2, iy1:iy2, iz1:iz2)
+    write(fh) fw%edensity_absorb%f(ix1:ix2, iy1:iy2, iz1:iz2)
+    close(fh)
+    return
+end subroutine write_Ac_field_bin
 
  ! Experimetal Implementation of Incident/Reflection/Transmit field output
 subroutine write_wave_data_file(fh, iit, fs, fw)
