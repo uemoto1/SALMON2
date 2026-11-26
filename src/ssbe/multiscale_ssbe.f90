@@ -502,7 +502,9 @@ subroutine write_Ac_field(iit, fs, fw)
         fw%vec_Ac%v(:, ix, iy, iz), &
         fw%vec_e%v(:, ix, iy, iz), &
         fw%vec_h%v(:, ix, iy, iz), &
-        fw%vec_j_em%v(:, ix, iy, iz)
+        fw%vec_j_em%v(:, ix, iy, iz), &
+        fw%edensity_emfield%f(ix, iy, iz), &
+        fw%edensity_absorb%f(ix, iy, iz)
     end do
     end do
     end do
